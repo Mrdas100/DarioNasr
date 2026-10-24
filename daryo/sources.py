@@ -54,8 +54,9 @@ def _save_media(kind: str, fetch, ref, thumb, dest: Path, stem: str) -> str | No
                 vid = dest / f"{stem}.mp4"
                 vid.write_bytes(fetch(ref))
                 jpg = dest / f"{stem}.jpg"
-                ok = extract_frame(vid, jpg)
-                vid.unlink(missing_ok=True)
+                ok = extract_frame(vid, jpg)   # الفيديو يبقى بجانب اللقطة لسنابة الفيديو
+                if not ok:
+                    vid.unlink(missing_ok=True)
                 if ok:
                     return str(jpg)
             except Exception as e:
@@ -134,7 +135,7 @@ class TelethonSource:
                         jpg = Path(str(target) + ".jpg")
                         if vid and await asyncio.to_thread(extract_frame, Path(vid), jpg):
                             path = str(jpg)
-                        if vid:
+                        elif vid:
                             Path(vid).unlink(missing_ok=True)
                     if not path:  # أكبر صورة مصغرة للفيديو كما نشرها المصدر
                         path = await self.client.download_media(m, file=str(target), thumb=-1)

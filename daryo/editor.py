@@ -117,7 +117,10 @@ def _natural_cut(words: list[str]) -> int:
 def rule_based(raw: str) -> EditResult:
     """محرر احتياطي محافظ: يقتطع من نص المصدر حرفيًا"""
     text = SOURCE_SIGNATURES.sub(" ", strip_decor(raw))
-    text = re.sub(r"^\s*(عاجل|خاص|رسميا|رسميًا|مصادر|مصدر|تقارير)\s*[:\-|]+\s*", "", text)
+    # وسوم بداية الخبر مثل "عاجل — رسمياً:" قد تتكرر
+    label = r"^\s*(عاجل|خاص|رسمي[اًً]*|مصادر|مصدر|تقارير)\s*[:\-|—–]+\s*"
+    while re.match(label, text):
+        text = re.sub(label, "", text, count=1)
     text = re.sub(r"^\s*(عاجل|خاص)\s+", "", text)
     lines = [l.strip(" -–•|") for l in text.split("\n") if l.strip(" -–•|")]
     if not lines:
@@ -126,7 +129,7 @@ def rule_based(raw: str) -> EditResult:
     sentences = re.split(r"(?<=[.!؟?])\s+|\s+[-–]\s+", first)
     headline = tidy_punct(sentences[0])
     rest = " ".join(sentences[1:] + lines[1:])
-    if len(headline.split()) > 10:
+    if len(headline.split()) > 13:  # جملة قصيرة نسبيًا تبقى كاملة بدل قطعها
         words = headline.split()
         cut = _natural_cut(words)
         headline, rest = " ".join(words[:cut]), " ".join(words[cut:] + [rest]).strip()

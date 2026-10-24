@@ -16,13 +16,14 @@ from .config import Config
 from .db import DB, now_utc
 from .editor import Editor, EditorError, to_snap
 from .filters import reject_reason
-from .models import TEMPLATE_AR, SourcePost
+from .models import SourcePost
 from .qa import QAError, check_image_file, check_render, check_snap_text, strip_unsupported, verify_font
 from .render import RenderError, Renderer, save_png
 from .schedule import in_hours, parse_hours
 from .sources import BotSource, SourceError, WebSource, make_source
 from .telegram_bot import Bot
 from .textutil import normalize_ar
+from .video import VideoError, compose, video_of
 
 log = logging.getLogger("daryo")
 
@@ -304,14 +305,9 @@ class Service:
                                 dup_of=ref[0], **base)
             return
         is_update = relation == "update"
-        old_headline = ""
-        if is_update and ref[1]:
-            old = self.db.known(ref[1])
-            old_headline = (old["headline"] if old else "") or ""
 
         # الصور الأصلية من المصدر
         photos: list[str] = []
-        img_note = ""
         if self.cfg.use_source_images and p.media_refs:
             downloaded = await (src or self.source).download(p, self.cfg.media_dir)
             for ph in downloaded:
@@ -319,59 +315,74 @@ class Service:
                     check_image_file(ph)
                     photos.append(ph)
                 except QAError as e:
-                    img_note = f"تم تجاهل صورة: {e}"
                     log.info("صورة %s مرفوضة: %s", msg_id, e)
             if p.media_refs and not photos:
-                img_note = img_note or "تعذر تحميل صورة المصدر فاستُخدم القالب النصي"
-        targets = photos if (self.cfg.album_mode == "each" and photos) else [photos[0] if photos else None]
+                log.warning("تعذر تحميل أي صورة للخبر %s", msg_id)
+        if p.has_video and not any(video_of(ph) for ph in photos) and not isinstance(src, WebSource):
+            # فيديو أكبر من حد Bot API: نجلبه من صفحة المعاينة العامة للقناة
+            photos = await self._web_video(p) or photos
+        # الصورة الأولى أساسية، وإن لم تصلح نجرب بقية صور الألبوم قبل القالب النصي
+        if self.cfg.album_mode == "each" and photos:
+            groups = [[ph] for ph in photos]
+        else:
+            groups = [photos]
 
         clean = lambda s: strip_unsupported(s, self.cfg.font_path)
         sent_paths = []
-        for i, photo in enumerate(targets):
-            snap = to_snap(res, photo, p.url, is_update, clean)
-            try:
-                path = await asyncio.to_thread(self._design, snap, msg_id, i)
-            except (RenderError, QAError) as e:
-                if photo is not None:
-                    # الصورة لا تتسع بشكل سليم: نجرب القالب النصي بدل إرسال تصميم ناقص
-                    try:
-                        snap.image_path = None
-                        path = await asyncio.to_thread(self._design, snap, msg_id, i)
-                        img_note = f"استُخدم القالب النصي لأن الصورة لم تجتز الفحص ({e})"
-                    except (RenderError, QAError) as e2:
-                        self._design_failed(msg_id, base, p, e2)
-                        return
-                else:
-                    self._design_failed(msg_id, base, p, e)
-                    return
-            caption = self.caption(snap, res, method, old_headline, img_note, len(photos))
+        for i, options in enumerate(groups):
+            path = lay = None
+            used = None
+            last_err = None
+            for photo in options + [None]:
+                snap = to_snap(res, photo, p.url, is_update, clean)
+                try:
+                    path, lay = await asyncio.to_thread(self._design, snap, msg_id, i)
+                    used = photo
+                    break
+                except (RenderError, QAError) as e:
+                    last_err = e
+                    log.info("تصميم %s بالصورة %s لم يجتز الفحص: %s", msg_id, photo, e)
+            if path is None:
+                self._design_failed(msg_id, base, p, last_err)
+                return
+            if options and used is None:
+                self.alert(f"خبر صوره لم تتسع في التصميم فأُرسل بالقالب النصي\n{p.url}")
+            out = path
+            vid = video_of(used)
+            if vid is not None:
+                box = next((b for n, b in lay.boxes if n == "photo"), None)
+                try:
+                    out = await asyncio.to_thread(compose, path, vid, box, path.with_suffix(".mp4"))
+                except VideoError as e:
+                    log.warning("تعذر تركيب فيديو %s: %s", msg_id, e)
+                    self.alert(f"تعذر تجهيز سنابة الفيديو فأُرسلت صورة\n{p.url}")
             if self.bot:
                 try:
-                    await asyncio.to_thread(self.bot.send_png, path, caption)
+                    if out.suffix == ".mp4":
+                        await asyncio.to_thread(self.bot.send_video, out)
+                    else:
+                        await asyncio.to_thread(self.bot.send_png, out)
                 except Exception as e:
-                    self.db.upsert_post(msg_id, status="failed", reason=f"إرسال: {e}", png_path=str(path), **base)
+                    self.db.upsert_post(msg_id, status="failed", reason=f"إرسال: {e}", png_path=str(out), **base)
                     self.alert(f"التصميم جاهز لكن فشل إرساله\n{e}\n{p.url}")
                     return
-            sent_paths.append(str(path))
-        if self.bot and p.media_refs:
-            await asyncio.to_thread(self._send_originals, p, photos)
+            sent_paths.append(str(out))
         self.db.upsert_post(msg_id, status="sent", reason=None, template=res.template, headline=res.headline,
                             body=res.body, update_of=ref[0] if is_update else None,
                             png_path=";".join(sent_paths), sent_at=now_utc().isoformat(), **base)
         log.info("أُرسل %s: %s", msg_id, res.headline)
 
-    def _send_originals(self, p: SourcePost, photos: list[str]):
-        """إرفاق صور/فيديو الخبر الأصلية بعد السنابة"""
+    async def _web_video(self, p: SourcePost) -> list[str]:
         try:
-            self.bot.copy_originals("@" + self.cfg.source_channel.lstrip("@"), p.msg_ids or [p.msg_id])
-            return
+            web = WebSource(self.cfg)
+            for wp in await web.fetch_latest():
+                if wp.msg_id in (p.msg_ids or [p.msg_id]) and wp.has_video:
+                    got = await web.download(wp, self.cfg.media_dir)
+                    if any(video_of(g) for g in got):
+                        return got
         except Exception as e:
-            log.warning("تعذر نسخ الوسائط الأصلية من القناة: %s", e)
-        if photos:
-            try:
-                self.bot.send_photo_files(photos)
-            except Exception as e:
-                log.warning("تعذر إرسال الصور الأصلية: %s", e)
+            log.warning("تعذر جلب الفيديو من صفحة المعاينة: %s", e)
+        return []
 
     def _design(self, snap, msg_id: int, idx: int) -> Path:
         check_snap_text(snap, self.cfg.font_path)
@@ -380,34 +391,17 @@ class Service:
         if problems:
             raise QAError("؛ ".join(problems))
         stamp = datetime.now(ZoneInfo(self.cfg.timezone)).strftime("%Y%m%d_%H%M")
-        return save_png(img, self.cfg.out_dir / f"daryo_{stamp}_{msg_id}_{idx}.png")
+        return save_png(img, self.cfg.out_dir / f"daryo_{stamp}_{msg_id}_{idx}.png"), lay
 
     def _design_failed(self, msg_id, base, p, e):
         self.db.upsert_post(msg_id, status="failed", reason=f"تصميم: {e}", **base)
         self.alert(f"فشل تصميم خبر ولم تُرسل أي صورة\nالسبب: {e}\n{p.url}")
 
-    def caption(self, snap, res, method, old_headline, img_note, n_photos) -> str:
-        tags = [TEMPLATE_AR.get(snap.template, "")]
-        if snap.is_update:
-            tags.insert(0, "🔄 تحديث")
-        if snap.is_rumor:
-            tags.append("غير رسمي")
-        lines = [" | ".join(t for t in tags if t), "", res.telegram_caption or snap.headline, ""]
-        if snap.is_update and old_headline:
-            lines.append(f"الخبر السابق: {old_headline}")
-        if n_photos > 1 and self.cfg.album_mode == "first":
-            lines.append(f"الألبوم فيه {n_photos} صور واستُخدمت الأولى")
-        if img_note:
-            lines.append(img_note)
-        lines.append(f"المصدر: {snap.source_url}")
-        lines.append(f"التحرير: {'Claude' if method == 'llm' else 'محرر محلي'} | للنشر اليدوي في {self.cfg.snap_handle}")
-        return "\n".join(lines)
-
     async def send_test(self):
         from .samples import SAMPLES
         snap = SAMPLES["1_breaking"]
         try:
-            path = await asyncio.to_thread(self._design, snap, 0, 0)
+            path, _ = await asyncio.to_thread(self._design, snap, 0, 0)
             if self.bot:
                 await asyncio.to_thread(self.bot.send_png, path, "🧪 سنابة تجريبية (خبر وهمي للاختبار فقط)")
         except Exception as e:

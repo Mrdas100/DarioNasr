@@ -171,3 +171,39 @@ def test_preview_parser_video():
     p = parse_preview_html(html, "n9rfc")[0]
     assert p.has_video and p.media_refs == [("video", "https://cdn.example/v.mp4", "https://cdn.example/t.jpg")]
     assert p.msg_ids == [500]
+
+
+def test_video_snap(svc, tmp_path):
+    import subprocess
+    vid = tmp_path / "src.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=720x1280:rate=30:duration=3",
+                    "-f", "lavfi", "-i", "sine=duration=3", "-shortest", "-pix_fmt", "yuv420p", str(vid)], check=True)
+    from daryo.sources import extract_frame
+
+    class VidSource(FakeSource):
+        async def download(self, post, dest):
+            dest.mkdir(parents=True, exist_ok=True)
+            mp4 = dest / f"{post.msg_id}_0.mp4"
+            shutil.copy(vid, mp4)
+            jpg = dest / f"{post.msg_id}_0.jpg"
+            assert extract_frame(mp4, jpg)
+            return [str(jpg)]
+
+    svc.source = VidSource()
+    p = post(20, "نيو لوك قلب الاسد انييغو مارتينيز")
+    p.has_video = True
+    run(svc.process(p))
+    row = svc.db.known(20)
+    assert row["status"] == "sent" and row["png_path"].endswith(".mp4")
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,width,height",
+                          "-of", "csv=p=0", row["png_path"]], capture_output=True, text=True).stdout
+    assert "video,1080,1920" in out and "audio" in out
+
+
+def test_long_text_keeps_photo(svc):
+    text = ("عاجل — رسمياً: موقع FIFA يحتسب الهدف الثاني للنصر هدفًا عكسيًا وليس لكريستيانو رونالدو! "
+            "وبذلك يتوقف رصيد رونالدو عند هدف واحد في المباراة بعد مراجعة اللقطة من الاتحاد الدولي")
+    run(svc.process(post(21, text)))
+    row = svc.db.known(21)
+    assert row["status"] == "sent"
+    assert "عاجل" not in row["headline"]

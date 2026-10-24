@@ -16,6 +16,7 @@ EMOJI_RE = re.compile(
     "\U0001F1E6-\U0001F1FF⌀-⏿■-◿✀-➿]+"
 )
 AR_INDIC = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
+BIDI_RE = re.compile("[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]")
 NUM_RE = re.compile(r"\d+(?:[.,٫]\d+)?")
 
 
@@ -26,6 +27,7 @@ def strip_decor(text: str) -> str:
     t = HASHTAG_RE.sub(lambda m: m.group(1).replace("_", " "), t)
     t = EMOJI_RE.sub(" ", t)
     t = t.replace(TATWEEL, "")
+    t = BIDI_RE.sub("", t)
     # الحروف الممطوطة مثل عاااااجل ← عاجل
     t = re.sub(r"([\u0621-\u064A])\1{2,}", r"\1", t)
     t = re.sub(r"[ \t]+", " ", t)

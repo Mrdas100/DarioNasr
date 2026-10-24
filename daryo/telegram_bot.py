@@ -44,13 +44,22 @@ class Bot:
         return self._call("sendMessage", data={"chat_id": chat_id or self.owner, "text": text[:4000],
                                                "disable_web_page_preview": True})
 
-    def send_png(self, path: Path, caption: str):
+    def send_png(self, path: Path, caption: str = ""):
         """sendDocument يحافظ على الملف كما هو دون ضغط تيليجرام"""
+        data = {"chat_id": self.owner, "disable_content_type_detection": True}
+        if caption:
+            data["caption"] = caption[:1024]
         with open(path, "rb") as f:
-            return self._call("sendDocument", timeout=120,
-                              data={"chat_id": self.owner, "caption": caption[:1024],
-                                    "disable_content_type_detection": True},
+            return self._call("sendDocument", timeout=120, data=data,
                               files={"document": (Path(path).name, f, "image/png")})
+
+    def send_video(self, path: Path):
+        """سنابة الفيديو جاهزة للحفظ مباشرة بدون أي نص"""
+        with open(path, "rb") as f:
+            return self._call("sendVideo", timeout=300,
+                              data={"chat_id": self.owner, "width": 1080, "height": 1920,
+                                    "supports_streaming": True},
+                              files={"video": (Path(path).name, f, "video/mp4")})
 
     def copy_originals(self, from_chat: str, msg_ids: list[int]):
         """ينسخ رسائل المصدر نفسها (الصور والفيديو الأصلية) إلى محادثتك بدون اسم القناة"""

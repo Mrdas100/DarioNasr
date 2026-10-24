@@ -284,29 +284,20 @@ class Renderer:
 
         photo = self.load_photo(snap.image_path)
         has_photo = photo is not None
-        text_img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        td = ImageDraw.Draw(text_img)
         max_w = W - 2 * SIDE - (20 if photo is not None else 110)
-
-        # حجم النصوص أكبر في القالب النصي
-        k = 1.0 if has_photo else 1.22
-        blocks = self._blocks(snap, k)
-        ty = 0
-        for name, text, start, minimum, max_lines, color, gap in blocks:
-            size, lines = self.fit(text, max_w, int(start), int(minimum), max_lines)
-            if size is None:
-                lay.overflow.append(name)
-                size = int(minimum)
-                lines = lines[:max_lines]
-            ty += gap
-            ty = self.draw_lines(td, lines, size, ty, color, lay, name)
-        text_h = ty
-
+        avail = CONTENT_BOTTOM - content_top
+        # حجم النصوص أكبر في القالب النصي. مع الصورة نصغّر النص تدريجيًا حتى تتسع الصورة دائمًا
+        tiers = [(1.0, False), (0.9, False), (0.8, False), (0.8, True), (0.7, True)] if has_photo else [(1.22, False)]
+        base_boxes, base_texts = list(lay.boxes), list(lay.texts)
+        for k, drop_body in tiers:
+            lay.boxes, lay.overflow, lay.texts = list(base_boxes), [], list(base_texts)
+            text_img, text_h = self._text_layer(snap, k, drop_body, max_w, lay)
+            if not has_photo or avail - text_h - 40 >= 460:
+                break
         avail = CONTENT_BOTTOM - content_top
         if has_photo:
             photo_space = avail - text_h - 40
-            min_ph = 520
-            if photo_space < min_ph:
+            if photo_space < 400:
                 raise RenderError("النص طويل ولا يترك مساحة كافية للصورة")
             # إن كانت الصورة عريضة يتوزع الفراغ بالتساوي فوق النص وتحت الصورة
             box_w = W - 2 * SIDE
@@ -326,6 +317,23 @@ class Renderer:
 
         self.footer(img, lay)
         return img, lay
+
+    def _text_layer(self, snap: Snap, k: float, drop_body: bool, max_w: int, lay: Layout):
+        text_img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        td = ImageDraw.Draw(text_img)
+        ty = 0
+        for name, text, start, minimum, max_lines, color, gap in self._blocks(snap, k):
+            if drop_body and name == "text:body":
+                continue
+            minimum = min(int(minimum), int(start))
+            size, lines = self.fit(text, max_w, int(start), int(minimum * min(1.0, k)), max_lines)
+            if size is None:
+                lay.overflow.append(name)
+                size = int(minimum)
+                lines = lines[:max_lines]
+            ty += gap
+            ty = self.draw_lines(td, lines, size, ty, color, lay, name)
+        return text_img, ty
 
     def _paste_text(self, img, text_img, top, h, lay: Layout):
         crop = text_img.crop((0, 0, W, h + 10))
