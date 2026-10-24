@@ -27,6 +27,7 @@ BREAKING_SIGNS = ["عاجل", "🚨", "‼", "الان", "الآن"]
 STATS_SIGNS = ["ارقام", "أرقام", "احصائ", "إحصائ", "هدف", "اهداف", "أهداف", "مباراه", "مباراة", "%", "رقم",
                "صناعه", "صناعة", "سجل", "تمريره", "تمريرة", "دقيقه", "دقيقة"]
 
+PREFIXES = {"و", "ف", "ب", "ل", "ال", "وال", "بال", "فال", "لل", "ولل"}
 SOURCE_SIGNATURES = re.compile(r"(منبر\s*النصر|n9rfc|قناة\s*منبر\s*النصر)", re.I)
 
 SYSTEM_PROMPT = """أنت محرر أخبار رياضية سعودي لحساب "داريو النصر" على سناب شات (المعرف N9rfc1).
@@ -71,7 +72,18 @@ class EditorError(Exception):
 
 
 def _has_any(norm: str, signs) -> bool:
-    return any(normalize_ar(s) in norm for s in signs if normalize_ar(s))
+    words = norm.split()
+    for s in signs:
+        n = normalize_ar(s)
+        if not n:
+            continue
+        if len(n) <= 4 and " " not in n:
+            # الكلمات القصيرة تُطابق ككلمة كاملة: "قد" لا تطابق "قدمه" و"عرض" لا تطابق "معرض"
+            if any(w == n or (w.endswith(n) and w[:-len(n)] in PREFIXES) for w in words):
+                return True
+        elif n in norm:
+            return True
+    return False
 
 
 def classify(raw: str) -> str:

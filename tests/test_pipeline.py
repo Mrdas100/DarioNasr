@@ -207,3 +207,9 @@ def test_long_text_keeps_photo(svc):
     row = svc.db.known(21)
     assert row["status"] == "sent"
     assert "عاجل" not in row["headline"]
+
+
+def test_short_rumor_words_match_whole_words():
+    from daryo.editor import is_rumor_text
+    assert not is_rumor_text("🚨 عاجل كل ما قدمه رونالدو امام الفيصلي")
+    assert is_rumor_text("قد يغيب رونالدو عن المباراة")
