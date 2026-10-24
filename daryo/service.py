@@ -161,13 +161,14 @@ class Service:
         if self.bot:
             ch = self.source.on_channel_post if self.source.name == "bot" else None
             self.bot.start_command_loop(self.handle_command, ch)
-        self.notify(f"🟢 بدأ نظام داريو النصر\n{self.status_text()}")
+        log.info("🟢 بدأ نظام داريو النصر\n%s", self.status_text())   # بدون رسالة: المحادثة للتصاميم فقط
         await self.baseline()
         n = int(os.environ.get("REPROCESS_ON_START", "0") or 0)
         dep = os.environ.get("RAILWAY_DEPLOYMENT_ID", "local")
         if n > 0 and self.db.get("reprocessed_deploy") != dep:
             self.db.set("reprocessed_deploy", dep)
-            await self.reprocess_latest(min(n, 10), force=os.environ.get("REPROCESS_FORCE") == "1")
+            ids = {int(x) for x in os.environ.get("REPROCESS_IDS", "").split(",") if x.strip().isdigit()}
+            await self.reprocess_latest(min(n, 10), force=os.environ.get("REPROCESS_FORCE") == "1", only=ids)
         while True:
             try:
                 enabled = self.db.get("enabled")
@@ -187,11 +188,13 @@ class Service:
                 pass
             self.wake.clear()
 
-    async def reprocess_latest(self, n: int, force: bool = False):
+    async def reprocess_latest(self, n: int, force: bool = False, only: set[int] | None = None):
         """يجلب آخر n منشورات من صفحة القناة العامة ويعالجها من جديد حتى لو سبق تسجيلها"""
         web = WebSource(self.cfg)
         try:
             posts = sorted(await web.fetch_latest(), key=lambda x: x.msg_id)[-n:]
+            if only:
+                posts = [p for p in posts if p.msg_id in only]
         except Exception as e:
             self.alert(f"تعذر جلب آخر المنشورات: {e}")
             return
@@ -208,7 +211,7 @@ class Service:
                 self.alert(f"فشل معالجة {p.url}: {e}")
             row = self.db.known(p.msg_id)
             lines.append(f"{p.msg_id} | {row['status'] if row else '-'} | {(row['reason'] or row['headline'] or '') if row else ''}")
-        self.notify("نتيجة إعادة المعالجة:\n" + ("\n".join(lines) or "لا توجد منشورات"))
+        log.info("نتيجة إعادة المعالجة:\n%s", "\n".join(lines) or "لا توجد منشورات")
 
     async def baseline(self):
         """أول تشغيل: لا نغرق المحادثة بالأخبار القديمة"""
