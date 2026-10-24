@@ -127,3 +127,25 @@ def test_preview_parser():
     assert posts[0].msg_id == 33011
     assert posts[0].text == "سطر أول\nسطر ثاني"
     assert [r[1] for r in posts[0].media_refs] == ["https://cdn.example/a.jpg", "https://cdn.example/b.jpg"]
+
+
+def test_bot_source_album():
+    import time as _t
+    from daryo.sources import BotSource
+    cfg = Config()
+    cfg.source_channel = "n9rfc"
+    src = BotSource(cfg)
+    src.SETTLE_SEC = 0
+    chat = {"id": -100123, "username": "n9rfc", "type": "channel"}
+    base = {"chat": chat, "date": int(_t.time()), "media_group_id": "g1"}
+    src.on_channel_post({**base, "message_id": 11, "caption": "عاجل النصر يفوز", "photo": [{"file_id": "s"}, {"file_id": "big1"}]}, False)
+    src.on_channel_post({**base, "message_id": 12, "photo": [{"file_id": "big2"}]}, False)
+    src.on_channel_post({"chat": {"id": 5, "username": "other"}, "date": 0, "message_id": 99, "text": "x"}, False)
+    posts = asyncio.run(src.fetch_latest())
+    assert len(posts) == 1
+    p = posts[0]
+    assert p.msg_id == 11 and p.text == "عاجل النصر يفوز"
+    assert [r[1] for r in p.media_refs] == ["big1", "big2"]
+    src.on_channel_post({**base, "message_id": 11, "caption": "عاجل النصر يفوز 2-0"}, True)
+    p = asyncio.run(src.fetch_latest())[0]
+    assert p.text.endswith("2-0") and len(p.media_refs) == 2

@@ -31,7 +31,8 @@ class Config:
 
     # مصدر الأخبار
     source_channel: str = field(default_factory=lambda: _env("SOURCE_CHANNEL", "n9rfc"))
-    # telethon = حساب تيليجرام عبر MTProto (الموصى به) | web = صفحة المعاينة العامة t.me/s | auto
+    # bot = البوت مشرف في القناة (الأفضل لمالك القناة) | telethon = حساب تيليجرام عبر MTProto
+    # web = صفحة المعاينة العامة t.me/s | auto
     source_mode: str = field(default_factory=lambda: _env("SOURCE_MODE", "auto"))
     tg_api_id: int = field(default_factory=lambda: int(_env("TG_API_ID", "0") or 0))
     tg_api_hash: str = field(default_factory=lambda: _env("TG_API_HASH"))
@@ -84,7 +85,7 @@ class Config:
             d.mkdir(parents=True, exist_ok=True)
 
     def resolved_source_mode(self) -> str:
-        if self.source_mode in ("telethon", "web"):
+        if self.source_mode in ("bot", "telethon", "web"):
             return self.source_mode
         session_file = Path(self.tg_session + ".session")
         if self.tg_api_id and self.tg_api_hash and session_file.exists():

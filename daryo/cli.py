@@ -47,10 +47,15 @@ async def _check(cfg: Config):
     print(f"• الشعار: {'موجود' if cfg.logo_path.exists() else 'غير موجود، سيُستخدم شعار نصي مؤقت'}")
     src = make_source(cfg)
     try:
+        if src.name == "bot":
+            print("• القراءة عبر البوت: تأكد أن البوت مشرف في القناة. المنشورات تصل فور نشرها")
+            raise StopIteration
         await src.start()
         posts = await src.fetch_latest()
         print(f"✓ القراءة عبر {src.name}: {len(posts)} منشور، آخرها {max((p.msg_id for p in posts), default='-')}")
         await src.stop()
+    except StopIteration:
+        pass
     except Exception as e:
         ok = False
         print(f"✗ القراءة عبر {src.name}: {e}")

@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -142,6 +144,95 @@ class WebSource:
         return out
 
 
+class BotSource:
+    """البوت مشرف في القناة: يستقبل المنشورات فور نشرها بالدقة الكاملة عبر Bot API"""
+    name = "bot"
+    SETTLE_SEC = 8          # انتظار اكتمال صور الألبوم قبل المعالجة
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.bot = None
+        self.lock = threading.Lock()
+        self.buffer: dict = {}       # key -> (SourcePost, last_update_monotonic)
+
+    def attach(self, bot):
+        self.bot = bot
+
+    async def start(self):
+        if self.bot is None:
+            raise SourceError("وضع bot يحتاج BOT_TOKEN")
+
+    async def stop(self):
+        pass
+
+    def _matches(self, chat: dict) -> bool:
+        want = self.cfg.source_channel.lstrip("@").lower()
+        return (chat.get("username") or "").lower() == want or str(chat.get("id")) == want
+
+    def on_channel_post(self, m: dict, edited: bool):
+        chat = m.get("chat") or {}
+        if not self._matches(chat):
+            log.info("تجاهل منشور من قناة أخرى: %s", chat.get("username") or chat.get("id"))
+            return
+        key = m.get("media_group_id") or f"m{m['message_id']}"
+        with self.lock:
+            entry = self.buffer.get(key)
+            if entry is None or edited:
+                old = entry[0] if entry else None
+                p = SourcePost(msg_id=old.msg_id if old else m["message_id"],
+                               date=datetime.fromtimestamp(m.get("date", time.time()), timezone.utc),
+                               text="", url=f"https://t.me/{self.cfg.source_channel}/{m['message_id']}")
+                if old and edited:
+                    p.media_refs, p.text, p.date = old.media_refs, old.text, old.date
+                p.edited = edited
+            else:
+                p = entry[0]
+            p.msg_id = min(p.msg_id, m["message_id"])
+            p.url = f"https://t.me/{self.cfg.source_channel}/{p.msg_id}"
+            text = m.get("text") or m.get("caption") or ""
+            if text and (edited or not p.text):
+                p.text = text
+            p.is_forward = p.is_forward or bool(m.get("forward_origin") or m.get("forward_from_chat"))
+            p.has_buttons = p.has_buttons or bool(m.get("reply_markup"))
+            if not edited:
+                if m.get("photo"):
+                    p.media_refs.append(("photo", m["photo"][-1]["file_id"]))
+                elif m.get("video") or m.get("animation"):
+                    v = m.get("video") or m.get("animation")
+                    p.has_video = True
+                    th = v.get("thumbnail") or v.get("thumb")
+                    if th:
+                        p.media_refs.append(("video_thumb", th["file_id"]))
+                elif (m.get("document") or {}).get("mime_type", "").startswith("image/"):
+                    p.media_refs.append(("photo", m["document"]["file_id"]))
+            self.buffer[key] = (p, time.monotonic())
+            # نحتفظ بآخر 100 منشور فقط
+            if len(self.buffer) > 100:
+                for k in sorted(self.buffer, key=lambda k: self.buffer[k][1])[:len(self.buffer) - 100]:
+                    del self.buffer[k]
+
+    async def fetch_latest(self, limit: int = 40) -> list[SourcePost]:
+        now = time.monotonic()
+        with self.lock:
+            return [p for p, t in self.buffer.values() if now - t >= self.SETTLE_SEC]
+
+    async def download(self, post: SourcePost, dest: Path) -> list[str]:
+        return await asyncio.to_thread(self._download, post, dest)
+
+    def _download(self, post: SourcePost, dest: Path) -> list[str]:
+        out = []
+        dest.mkdir(parents=True, exist_ok=True)
+        for i, (kind, file_id) in enumerate(post.media_refs):
+            try:
+                data = self.bot.get_file_bytes(file_id)
+                p = dest / f"{post.msg_id}_{i}.jpg"
+                p.write_bytes(data)
+                out.append(str(p))
+            except Exception as e:
+                log.warning("فشل تحميل صورة %s: %s", post.msg_id, e)
+        return out
+
+
 _BG = re.compile(r"background-image:url\('([^']+)'\)")
 
 
@@ -189,6 +280,8 @@ def parse_preview_html(html: str, channel: str) -> list[SourcePost]:
 
 def make_source(cfg):
     mode = cfg.resolved_source_mode()
+    if mode == "bot":
+        return BotSource(cfg)
     if mode == "telethon":
         return TelethonSource(cfg)
     return WebSource(cfg)

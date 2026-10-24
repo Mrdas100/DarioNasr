@@ -52,6 +52,13 @@ class Bot:
                                     "disable_content_type_detection": True},
                               files={"document": (Path(path).name, f, "image/png")})
 
+    def get_file_bytes(self, file_id: str) -> bytes:
+        info = self._call("getFile", data={"file_id": file_id})
+        token = self.base.rsplit("/bot", 1)[1]
+        r = self.s.get(f"https://api.telegram.org/file/bot{token}/{info['file_path']}", timeout=60)
+        r.raise_for_status()
+        return r.content
+
     def alert(self, text: str):
         try:
             self.send_text(f"⚠️ تنبيه نظام داريو النصر\n{text}")
@@ -59,8 +66,9 @@ class Bot:
             log.error("تعذر إرسال التنبيه: %s", e)
 
     # ---------- استقبال الأوامر ----------
-    def start_command_loop(self, handler):
-        t = threading.Thread(target=self._loop, args=(handler,), daemon=True, name="bot-commands")
+    def start_command_loop(self, handler, channel_handler=None):
+        self.channel_handler = channel_handler
+        t = threading.Thread(target=self._loop, args=(handler,), daemon=True, name="bot-updates")
         t.start()
         return t
 
@@ -68,12 +76,21 @@ class Bot:
         offset = None
         while True:
             try:
-                params = {"timeout": 50, "allowed_updates": '["message"]'}
+                params = {"timeout": 50,
+                          "allowed_updates": '["message","channel_post","edited_channel_post"]'}
                 if offset:
                     params["offset"] = offset
                 r = self.s.get(f"{self.base}/getUpdates", params=params, timeout=65)
                 for upd in r.json().get("result", []):
                     offset = upd["update_id"] + 1
+                    ch = upd.get("channel_post") or upd.get("edited_channel_post")
+                    if ch is not None:
+                        if getattr(self, "channel_handler", None):
+                            try:
+                                self.channel_handler(ch, "edited_channel_post" in upd)
+                            except Exception as e:
+                                log.warning("تعذر قراءة منشور القناة: %s", e)
+                        continue
                     msg = upd.get("message") or {}
                     chat = (msg.get("chat") or {}).get("id")
                     text = (msg.get("text") or "").strip()

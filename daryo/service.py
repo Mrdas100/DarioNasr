@@ -20,7 +20,7 @@ from .models import TEMPLATE_AR, SourcePost
 from .qa import QAError, check_image_file, check_render, check_snap_text, strip_unsupported, verify_font
 from .render import RenderError, Renderer, save_png
 from .schedule import in_hours, parse_hours
-from .sources import SourceError, WebSource, make_source
+from .sources import BotSource, SourceError, WebSource, make_source
 from .telegram_bot import Bot
 from .textutil import normalize_ar
 
@@ -49,6 +49,10 @@ class Service:
         self.dry_run = os.environ.get("DRY_RUN", "0") == "1" or not cfg.bot_token
         self.bot = None if self.dry_run else Bot(cfg.bot_token, cfg.owner_chat_id)
         self.source = make_source(cfg)
+        if self.source.name == "bot":
+            if not self.bot:
+                raise SystemExit("وضع SOURCE_MODE=bot يحتاج BOT_TOKEN و OWNER_CHAT_ID")
+            self.source.attach(self.bot)
         self.editor = Editor(cfg)
         self.renderer = Renderer(cfg.font_path, cfg.logo_path, cfg.snap_handle, cfg.account_name)
         self.wake = asyncio.Event()
@@ -148,7 +152,8 @@ class Service:
             else:
                 raise
         if self.bot:
-            self.bot.start_command_loop(self.handle_command)
+            ch = self.source.on_channel_post if self.source.name == "bot" else None
+            self.bot.start_command_loop(self.handle_command, ch)
         self.notify(f"🟢 بدأ نظام داريو النصر\n{self.status_text()}")
         await self.baseline()
         while True:
