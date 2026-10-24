@@ -1,0 +1,261 @@
+"""التحرير الإخباري: اختصار وإعادة صياغة واختيار القالب
+
+يستخدم Claude عند توفر ANTHROPIC_API_KEY، وإلا يعمل محرر قواعد محلي محافظ
+يقتبس من نص المصدر حرفيًا دون إضافة أي معلومة.
+"""
+from __future__ import annotations
+
+import logging
+import re
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from .models import Snap
+from .textutil import clip_words, normalize_ar, numbers, strip_decor, tidy_punct
+
+log = logging.getLogger("daryo.editor")
+
+RUMOR_SIGNS = ["مصادر", "مصدر", "تقارير", "تقرير", "حسب", "وفقا", "وفق", "انباء", "أنباء", "صحيفه", "صحيفة",
+               "يقترب", "قريب من", "مفاوضات", "يدرس", "مهتم", "اهتمام", "عرض", "شائعات", "تسريب", "مرشح",
+               "قد ", "ربما", "يتوقع", "متوقع", "علمت", "خاص"]
+OFFICIAL_SIGNS = ["رسميا", "رسمي", "يعلن", "اعلن", "أعلن", "بيان", "النادي يعلن", "المركز الاعلامي"]
+TRANSFER_SIGNS = ["انتقال", "صفقه", "صفقة", "توقيع", "يوقع", "عقد", "تجديد", "اعاره", "إعارة", "التعاقد",
+                  "الميركاتو", "يرحل", "رحيل", "فسخ", "الانضمام", "ينضم", "مفاوضات", "شرط جزائي"]
+STATEMENT_SIGNS = ["قال", "صرح", "تصريح", "يقول", "اكد", "أكد", "مؤتمر", "حديث", "في حديثه", ":", "«", '"']
+BREAKING_SIGNS = ["عاجل", "🚨", "‼", "الان", "الآن"]
+STATS_SIGNS = ["ارقام", "أرقام", "احصائ", "إحصائ", "هدف", "اهداف", "أهداف", "مباراه", "مباراة", "%", "رقم",
+               "صناعه", "صناعة", "سجل", "تمريره", "تمريرة", "دقيقه", "دقيقة"]
+
+SOURCE_SIGNATURES = re.compile(r"(منبر\s*النصر|n9rfc|قناة\s*منبر\s*النصر)", re.I)
+
+SYSTEM_PROMPT = """أنت محرر أخبار رياضية سعودي لحساب "داريو النصر" على سناب شات (المعرف N9rfc1).
+تستقبل منشورًا من قناة منبر النصر في تيليجرام وتحوّله إلى محتوى سنابة واحدة.
+
+قواعد صارمة:
+- اختصر دون تغيير المعنى. لا تضف أي معلومة غير موجودة في النص الأصلي إطلاقًا.
+- حافظ على الأرقام والأسماء كما وردت حرفيًا. لا تحسب أرقامًا جديدة.
+- لا تحوّل التسريبات أو أخبار المصادر والتقارير والمفاوضات إلى أخبار رسمية. إن كان الخبر غير مؤكد فاجعل is_rumor=true ولا تكتب "رسميًا".
+- لا تستخدم kicker "رسميًا" إلا إذا ذكر النص الأصلي أن الأمر رسمي أو صدر في بيان.
+- أسلوب سعودي قوي وسريع القراءة. أبرز أهم معلومة في العنوان.
+- العنوان من 4 إلى 9 كلمات. النص الفرعي اختياري حتى 16 كلمة.
+- تجنب الفواصل والنقاط غير الضرورية ولا تضع نقطة في آخر العنوان. لا إيموجي ولا وسوم ولا روابط.
+- لا تذكر اسم قناة المصدر في التصميم.
+- اختر القالب: breaking للعاجل المهم، statement للتصريحات (speaker = صاحب التصريح، quote = جوهر كلامه بنصه أو باختصار أمين)، stats للأرقام والإحصائيات (number = الرقم الأبرز كما ورد، number_caption = ماذا يعني)، transfer للانتقالات والعقود، general لغير ذلك.
+- publishable=false للإعلانات أو المنشورات التفاعلية أو الأسئلة للجمهور أو النكت أو ما لا يحمل خبرًا، أو إذا لم يكن في النص معلومة كافية.
+- telegram_caption: الخبر مختصرًا في سطرين بنفس القواعد.
+- علاقة الخبر بالأخبار السابقة المرفقة: duplicate إذا كان نفس الخبر بصياغة أخرى دون جديد، update إذا كان نفس الموضوع مع معلومة جديدة أو تغير في الحالة (مثل تأكيد رسمي أو رقم جديد أو نفي)، new إذا كان خبرًا مختلفًا. related_index رقم الخبر السابق المقصود أو -1.
+"""
+
+
+class EditResult(BaseModel):
+    publishable: bool
+    skip_reason: str = ""
+    template: Literal["breaking", "statement", "stats", "transfer", "general"]
+    headline: str
+    body: str = ""
+    kicker: str = Field("", description="كلمة أو كلمتان مثل الآن أو رسميًا، أو فارغ")
+    number: str = ""
+    number_caption: str = ""
+    speaker: str = ""
+    quote: str = ""
+    is_rumor: bool
+    transfer_status: Literal["official", "rumor", "none"] = "none"
+    relation: Literal["new", "duplicate", "update"] = "new"
+    related_index: int = -1
+    telegram_caption: str = ""
+
+
+class EditorError(Exception):
+    pass
+
+
+def _has_any(norm: str, signs) -> bool:
+    return any(normalize_ar(s) in norm for s in signs if normalize_ar(s))
+
+
+def classify(raw: str) -> str:
+    norm = normalize_ar(raw)
+    if _has_any(norm, TRANSFER_SIGNS):
+        return "transfer"
+    if any(s in raw for s in ("🚨", "‼")) or "عاجل" in norm:
+        return "breaking"
+    if re.search(r"^[^\n:]{3,40}:", strip_decor(raw)) or _has_any(norm, ["صرح", "تصريح", "في حديثه", "مؤتمر"]):
+        return "statement"
+    nums = numbers(raw)
+    if len(nums) >= 2 and _has_any(norm, STATS_SIGNS):
+        return "stats"
+    return "general"
+
+
+def is_rumor_text(raw: str) -> bool:
+    norm = normalize_ar(raw)
+    return _has_any(norm, RUMOR_SIGNS) and not _has_any(norm, ["رسميا", "بيان رسمي", "النادي يعلن"])
+
+
+MEDIUM_BREAKS = {"بسبب", "بعد", "قبل", "لمدة", "حتى", "خلال", "رغم", "إثر", "اثر", "مقابل"}
+WEAK_BREAKS = {"في", "عن", "مع", "عبر", "وسط", "على"}
+
+
+def _natural_cut(words: list[str]) -> int:
+    """موضع قطع العنوان عند حرف عطف أو سبب بدل منتصف العبارة"""
+    found = {3: None, 2: None, 1: None}
+    for i in range(5, min(11, len(words))):
+        w = words[i]
+        if w.startswith("و") and w[1:3] == "ال" and len(w) > 4:
+            found[3] = found[3] or i          # أول عطف
+        elif w in MEDIUM_BREAKS:
+            found[2] = i
+        elif w in WEAK_BREAKS:
+            found[1] = i
+    for level in (3, 2, 1):
+        if found[level]:
+            return found[level]
+    return min(9, len(words))
+
+
+def rule_based(raw: str) -> EditResult:
+    """محرر احتياطي محافظ: يقتطع من نص المصدر حرفيًا"""
+    text = SOURCE_SIGNATURES.sub(" ", strip_decor(raw))
+    text = re.sub(r"^\s*(عاجل|خاص|رسميا|رسميًا|مصادر|مصدر|تقارير)\s*[:\-|]+\s*", "", text)
+    text = re.sub(r"^\s*(عاجل|خاص)\s+", "", text)
+    lines = [l.strip(" -–•|") for l in text.split("\n") if l.strip(" -–•|")]
+    if not lines:
+        return EditResult(publishable=False, skip_reason="لا يوجد نص", template="general", headline="", is_rumor=False)
+    first = lines[0]
+    sentences = re.split(r"(?<=[.!؟?])\s+|\s+[-–]\s+", first)
+    headline = tidy_punct(sentences[0])
+    rest = " ".join(sentences[1:] + lines[1:])
+    if len(headline.split()) > 10:
+        words = headline.split()
+        cut = _natural_cut(words)
+        headline, rest = " ".join(words[:cut]), " ".join(words[cut:] + [rest]).strip()
+    body = tidy_punct(clip_words(rest, 16)) if rest else ""
+    if body and len(rest.split()) > 16:
+        # لا نقطع جملة في منتصفها بشكل مضلل: نكتفي بالجملة الأولى إن أمكن
+        first_sent = re.split(r"(?<=[.!؟?،])\s+", rest)[0]
+        body = tidy_punct(first_sent) if len(first_sent.split()) <= 16 else ""
+    template = classify(raw)
+    rumor = is_rumor_text(raw)
+    norm = normalize_ar(raw)
+    kicker = ""
+    if not rumor and _has_any(norm, ["رسميا"]):
+        kicker = "رسميًا"
+    speaker = quote = number = number_caption = ""
+    if len(lines) >= 2 and lines[0].rstrip().endswith(":"):
+        template = "statement"
+    if template == "statement":
+        joined = " ".join(lines)
+        short = re.match(r"^([^:\n]{3,40}):\s*(.+)$", joined, re.S)          # "المدرب: نص"
+        long_ = re.match(r"^([^:\n]{3,160}?)\s*:\s*(.+)$", joined, re.S)     # "فلان يتحدث عن كذا :\nنص"
+        m = short or (long_ if lines[0].rstrip().endswith(":") else None)
+        if m:
+            words = tidy_punct(m.group(1)).split()
+            speaker = " ".join(words[:_natural_cut(words)]) if len(words) > 10 else " ".join(words)
+            quote = tidy_punct(clip_words(m.group(2).strip(" \"«»"), 18))
+            headline, body = quote, ""
+        else:
+            template = "general"
+    if template == "stats":
+        nums = re.findall(r"\d+(?:[.,]\d+)?%?", text)
+        if nums:
+            number = nums[0]
+    caption = tidy_punct(" ".join(lines)[:600])
+    return EditResult(publishable=True, template=template, headline=headline, body=body, kicker=kicker,
+                      number=number, number_caption=number_caption, speaker=speaker, quote=quote,
+                      is_rumor=rumor, transfer_status="rumor" if (template == "transfer" and rumor) else
+                      ("official" if kicker else "none"), telegram_caption=caption)
+
+
+class Editor:
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.client = None
+        if cfg.anthropic_api_key:
+            import anthropic
+            self.client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, max_retries=3, timeout=120)
+
+    @property
+    def uses_llm(self) -> bool:
+        return self.client is not None
+
+    def edit(self, raw: str, history_cands: list) -> tuple[EditResult, str]:
+        """يعيد (النتيجة، الطريقة). يرفع EditorError عند الفشل الكامل"""
+        if self.client:
+            try:
+                res = self._llm(raw, history_cands)
+                problems = validate(res, raw)
+                if not problems:
+                    return res, "llm"
+                log.warning("مخرجات النموذج رُفضت: %s", problems)
+            except Exception as e:
+                log.warning("فشل نموذج اللغة، سيستخدم المحرر المحلي: %s", e)
+        res = rule_based(raw)
+        problems = validate(res, raw)
+        if problems:
+            raise EditorError("؛ ".join(problems))
+        return res, "rules"
+
+    def _llm(self, raw: str, cands: list) -> EditResult:
+        import anthropic
+        prev = "\n".join(f"[{i}] {row['headline'] or ''} | {(row['raw_text'] or '')[:300]}"
+                         for i, (_, row) in enumerate(cands)) or "لا يوجد"
+        user = f"المنشور الجديد:\n<<<\n{raw}\n>>>\n\nأخبار سابقة مشابهة أرسلناها:\n{prev}"
+        resp = self.client.messages.parse(
+            model=self.cfg.llm_model,
+            max_tokens=4000,
+            system=SYSTEM_PROMPT,
+            output_config={"effort": self.cfg.llm_effort},
+            messages=[{"role": "user", "content": user}],
+            output_format=EditResult,
+        )
+        if resp.stop_reason == "refusal":
+            raise EditorError("النموذج رفض الطلب")
+        if resp.parsed_output is None:
+            raise EditorError("لم يُرجع النموذج مخرجات صالحة")
+        return resp.parsed_output
+
+
+def validate(res: EditResult, raw: str) -> list[str]:
+    """حواجز الدقة: الأرقام والرسمية وطول النصوص"""
+    if not res.publishable:
+        return []
+    problems = []
+    src_nums = numbers(raw)
+    for field_name in ("headline", "body", "number", "number_caption", "quote", "kicker"):
+        val = getattr(res, field_name)
+        extra = numbers(val) - src_nums
+        if extra:
+            problems.append(f"رقم غير موجود في المصدر في {field_name}: {extra}")
+    norm = normalize_ar(raw)
+    if "رسمي" in normalize_ar(res.kicker + " " + res.headline) and not _has_any(norm, OFFICIAL_SIGNS):
+        problems.append("وصف الخبر بالرسمي والمصدر لا يذكر ذلك")
+    if res.transfer_status == "official" and is_rumor_text(raw):
+        problems.append("خبر انتقال غير مؤكد وُصف بالرسمي")
+    if not (res.headline or res.quote):
+        problems.append("لا يوجد عنوان")
+    if len(res.headline.split()) > 14:
+        problems.append("العنوان طويل")
+    return problems
+
+
+def to_snap(res: EditResult, image_path: str | None, source_url: str, is_update: bool,
+            clean) -> Snap:
+    """تحويل نتيجة التحرير إلى سنابة مع تنظيف الحروف غير المدعومة في الخط"""
+    rumor = res.is_rumor or res.transfer_status == "rumor"
+    return Snap(
+        template=res.template,
+        headline=clean(tidy_punct(res.headline)),
+        body=clean(tidy_punct(res.body)),
+        kicker=clean(tidy_punct(res.kicker)) if not rumor else "",
+        number=clean(res.number.strip()),
+        number_caption=clean(tidy_punct(res.number_caption)),
+        speaker=clean(tidy_punct(res.speaker)),
+        quote=clean(tidy_punct(res.quote)),
+        transfer_status=res.transfer_status if res.transfer_status != "none" else "",
+        is_rumor=rumor,
+        is_update=is_update,
+        image_path=image_path,
+        caption=res.telegram_caption or res.headline,
+        source_url=source_url,
+    )

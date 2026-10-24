@@ -1,0 +1,19 @@
+# بديل Docker: خدمة systemd على خادم Linux
+# sudo cp deploy/daryo-alnasr.service /etc/systemd/system/ && sudo systemctl daemon-reload
+# sudo systemctl enable --now daryo-alnasr && journalctl -u daryo-alnasr -f
+[Unit]
+Description=Daryo Alnasr news automation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=daryo
+WorkingDirectory=/opt/daryo-alnasr
+EnvironmentFile=/opt/daryo-alnasr/.env
+ExecStart=/opt/daryo-alnasr/.venv/bin/python -m daryo
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
