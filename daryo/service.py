@@ -168,7 +168,8 @@ class Service:
         if n > 0 and self.db.get("reprocessed_deploy") != dep:
             self.db.set("reprocessed_deploy", dep)
             ids = {int(x) for x in os.environ.get("REPROCESS_IDS", "").split(",") if x.strip().isdigit()}
-            await self.reprocess_latest(min(n, 10), force=os.environ.get("REPROCESS_FORCE") == "1", only=ids)
+            await self.reprocess_latest(min(n, 20), force=os.environ.get("REPROCESS_FORCE") == "1", only=ids,
+                                        videos_only=os.environ.get("REPROCESS_VIDEOS") == "1")
         while True:
             try:
                 enabled = self.db.get("enabled")
@@ -188,13 +189,16 @@ class Service:
                 pass
             self.wake.clear()
 
-    async def reprocess_latest(self, n: int, force: bool = False, only: set[int] | None = None):
+    async def reprocess_latest(self, n: int, force: bool = False, only: set[int] | None = None,
+                               videos_only: bool = False):
         """يجلب آخر n منشورات من صفحة القناة العامة ويعالجها من جديد حتى لو سبق تسجيلها"""
         web = WebSource(self.cfg)
         try:
             posts = sorted(await web.fetch_latest(), key=lambda x: x.msg_id)[-n:]
             if only:
                 posts = [p for p in posts if p.msg_id in only]
+            if videos_only:
+                posts = [p for p in posts if p.has_video]
         except Exception as e:
             self.alert(f"تعذر جلب آخر المنشورات: {e}")
             return
