@@ -1,0 +1,9 @@
+Telethon==1.45.0
+anthropic==2.3.0
+pydantic==2.14.1
+pillow==13.0.0
+fonttools==4.67.0
+beautifulsoup4==4.15.0
+requests==2.34.2
+python-dotenv==1.2.4
+tzdata==2026.5

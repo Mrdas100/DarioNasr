@@ -1,0 +1,12 @@
+services:
+  daryo:
+    build: .
+    container_name: daryo-alnasr
+    restart: unless-stopped        # يعمل بعد إعادة تشغيل الخادم وحتى لو أُغلقت لوحة التحكم
+    env_file: .env
+    volumes:
+      - ./data:/app/data           # السجل والجلسة والتصاميم
+      - ./assets:/app/assets       # الخط والشعار
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
