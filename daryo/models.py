@@ -27,6 +27,7 @@ class SourcePost:
     has_buttons: bool = False
     media_refs: list = field(default_factory=list)   # مراجع الوسائط قبل التحميل (رسائل Telethon أو روابط)
     edited: bool = False
+    msg_ids: list[int] = field(default_factory=list)   # كل رسائل الألبوم لإرفاق الوسائط الأصلية
 
 
 @dataclass

@@ -52,6 +52,30 @@ class Bot:
                                     "disable_content_type_detection": True},
                               files={"document": (Path(path).name, f, "image/png")})
 
+    def copy_originals(self, from_chat: str, msg_ids: list[int]):
+        """ينسخ رسائل المصدر نفسها (الصور والفيديو الأصلية) إلى محادثتك بدون اسم القناة"""
+        import json
+        return self._call("copyMessages", data={"chat_id": self.owner, "from_chat_id": from_chat,
+                                                "message_ids": json.dumps(sorted(msg_ids)[:10]),
+                                                "remove_caption": True})
+
+    def send_photo_files(self, paths: list[str]):
+        """بديل: يرفع الصور الأصلية المحمّلة كألبوم"""
+        import json
+        paths = paths[:10]
+        if len(paths) == 1:
+            with open(paths[0], "rb") as f:
+                return self._call("sendPhoto", timeout=120, data={"chat_id": self.owner},
+                                  files={"photo": f})
+        files = {f"p{i}": open(p, "rb") for i, p in enumerate(paths)}
+        try:
+            media = [{"type": "photo", "media": f"attach://p{i}"} for i in range(len(paths))]
+            return self._call("sendMediaGroup", timeout=120,
+                              data={"chat_id": self.owner, "media": json.dumps(media)}, files=files)
+        finally:
+            for f in files.values():
+                f.close()
+
     def get_file_bytes(self, file_id: str) -> bytes:
         info = self._call("getFile", data={"file_id": file_id})
         token = self.base.rsplit("/bot", 1)[1]

@@ -34,7 +34,8 @@ HELP = """أوامر نظام داريو النصر:
 /hours 24 تشغيل طوال اليوم
 /now فحص القناة فورًا
 /last آخر 10 منشورات وحالتها
-/latest 2 إعادة معالجة آخر منشورين في القناة
+/latest 2 معالجة آخر منشورين لم يُرسلا
+/redo 2 إعادة تصميم آخر منشورين حتى لو أُرسلا
 /test إرسال سنابة تجريبية"""
 
 
@@ -112,9 +113,9 @@ class Service:
                 return "لا يوجد سجل بعد"
             return "\n".join(f"{r['msg_id']} | {r['status']} | {(r['headline'] or r['reason'] or (r['raw_text'] or '')[:40])}"
                              for r in rows)
-        if cmd in ("/latest", "/retry"):
+        if cmd in ("/latest", "/retry", "/redo"):
             n = int(arg) if arg.strip().isdigit() else 2
-            asyncio.run_coroutine_threadsafe(self.reprocess_latest(min(n, 10)), self.loop)
+            asyncio.run_coroutine_threadsafe(self.reprocess_latest(min(n, 10), force=cmd == "/redo"), self.loop)
             return f"🔁 جارٍ معالجة آخر {min(n, 10)} منشورات من القناة"
         if cmd == "/test":
             asyncio.run_coroutine_threadsafe(self.send_test(), self.loop)
@@ -165,7 +166,7 @@ class Service:
         dep = os.environ.get("RAILWAY_DEPLOYMENT_ID", "local")
         if n > 0 and self.db.get("reprocessed_deploy") != dep:
             self.db.set("reprocessed_deploy", dep)
-            await self.reprocess_latest(min(n, 10))
+            await self.reprocess_latest(min(n, 10), force=os.environ.get("REPROCESS_FORCE") == "1")
         while True:
             try:
                 enabled = self.db.get("enabled")
@@ -185,7 +186,7 @@ class Service:
                 pass
             self.wake.clear()
 
-    async def reprocess_latest(self, n: int):
+    async def reprocess_latest(self, n: int, force: bool = False):
         """يجلب آخر n منشورات من صفحة القناة العامة ويعالجها من جديد حتى لو سبق تسجيلها"""
         web = WebSource(self.cfg)
         try:
@@ -196,7 +197,7 @@ class Service:
         lines = []
         for p in posts:
             prev = self.db.known(p.msg_id)
-            if prev is not None and prev["status"] == "sent":
+            if prev is not None and prev["status"] == "sent" and not force:
                 lines.append(f"{p.msg_id} | أُرسل سابقًا | {prev['headline'] or ''}")
                 continue
             try:
@@ -268,7 +269,7 @@ class Service:
         base = dict(posted_at=p.date.isoformat(), raw_text=raw, norm_text=norm, text_hash=text_hash(raw))
         msg_id = p.msg_id
         reason = reject_reason(p)
-        log.info("منشور %s: %s", msg_id, (raw or "[بدون نص]")[:60].replace("\n", " "))
+        log.info("منشور %s (وسائط %d): %s", msg_id, len(p.media_refs), (raw or "[بدون نص]")[:60].replace("\n", " "))
         if reason:
             log.info("استبعاد %s: %s", msg_id, reason)
             self.db.upsert_post(msg_id, status="skipped", reason=reason, **base)
@@ -319,6 +320,7 @@ class Service:
                     photos.append(ph)
                 except QAError as e:
                     img_note = f"تم تجاهل صورة: {e}"
+                    log.info("صورة %s مرفوضة: %s", msg_id, e)
             if p.media_refs and not photos:
                 img_note = img_note or "تعذر تحميل صورة المصدر فاستُخدم القالب النصي"
         targets = photos if (self.cfg.album_mode == "each" and photos) else [photos[0] if photos else None]
@@ -351,10 +353,25 @@ class Service:
                     self.alert(f"التصميم جاهز لكن فشل إرساله\n{e}\n{p.url}")
                     return
             sent_paths.append(str(path))
+        if self.bot and p.media_refs:
+            await asyncio.to_thread(self._send_originals, p, photos)
         self.db.upsert_post(msg_id, status="sent", reason=None, template=res.template, headline=res.headline,
                             body=res.body, update_of=ref[0] if is_update else None,
                             png_path=";".join(sent_paths), sent_at=now_utc().isoformat(), **base)
         log.info("أُرسل %s: %s", msg_id, res.headline)
+
+    def _send_originals(self, p: SourcePost, photos: list[str]):
+        """إرفاق صور/فيديو الخبر الأصلية بعد السنابة"""
+        try:
+            self.bot.copy_originals("@" + self.cfg.source_channel.lstrip("@"), p.msg_ids or [p.msg_id])
+            return
+        except Exception as e:
+            log.warning("تعذر نسخ الوسائط الأصلية من القناة: %s", e)
+        if photos:
+            try:
+                self.bot.send_photo_files(photos)
+            except Exception as e:
+                log.warning("تعذر إرسال الصور الأصلية: %s", e)
 
     def _design(self, snap, msg_id: int, idx: int) -> Path:
         check_snap_text(snap, self.cfg.font_path)

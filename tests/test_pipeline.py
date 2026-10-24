@@ -158,3 +158,16 @@ def test_elongated_breaking_label():
     assert r.template == "breaking" and r.speaker == ""
     assert r.headline.startswith("تعيين عصام الشوالي")
     assert validate(r, t) == []
+
+
+def test_preview_parser_video():
+    html = """<div class="tgme_widget_message" data-post="n9rfc/500">
+      <div class="tgme_widget_message_video_player">
+        <i class="tgme_widget_message_video_thumb" style="background-image:url('https://cdn.example/t.jpg')"></i>
+        <video src="https://cdn.example/v.mp4"></video>
+      </div>
+      <div class="tgme_widget_message_text">نيو لوك</div>
+    </div>"""
+    p = parse_preview_html(html, "n9rfc")[0]
+    assert p.has_video and p.media_refs == [("video", "https://cdn.example/v.mp4", "https://cdn.example/t.jpg")]
+    assert p.msg_ids == [500]

@@ -29,6 +29,46 @@ class SourceError(Exception):
     pass
 
 
+MAX_BOT_VIDEO = 20 * 1024 * 1024   # حد تحميل Bot API
+
+
+def extract_frame(video: Path, out: Path) -> bool:
+    """لقطة بالدقة الكاملة من فيديو الخبر الأصلي (ffmpeg)"""
+    import subprocess
+    for ss in ("1", "0"):
+        try:
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", ss, "-i", str(video),
+                            "-frames:v", "1", "-q:v", "2", str(out)], check=True, timeout=60)
+            if out.exists() and out.stat().st_size > 1000:
+                return True
+        except Exception as e:
+            log.warning("تعذر استخراج لقطة من الفيديو: %s", e)
+    return False
+
+
+def _save_media(kind: str, fetch, ref, thumb, dest: Path, stem: str) -> str | None:
+    """fetch(ref) -> bytes. للفيديو: لقطة من الفيديو نفسه وإلا الصورة المصغرة"""
+    if kind == "video":
+        if ref is not None:
+            try:
+                vid = dest / f"{stem}.mp4"
+                vid.write_bytes(fetch(ref))
+                jpg = dest / f"{stem}.jpg"
+                ok = extract_frame(vid, jpg)
+                vid.unlink(missing_ok=True)
+                if ok:
+                    return str(jpg)
+            except Exception as e:
+                log.warning("تعذر تحميل الفيديو %s: %s", stem, e)
+        if thumb is None:
+            return None
+        ref = thumb
+    data = fetch(ref)
+    p = dest / f"{stem}.jpg"
+    p.write_bytes(data)
+    return str(p)
+
+
 class TelethonSource:
     name = "telethon"
 
@@ -65,29 +105,39 @@ class TelethonSource:
                 groups[key] = p
             if m.message and not p.text:
                 p.text = m.message
+            p.msg_ids.append(m.id)
             p.is_forward = p.is_forward or bool(m.fwd_from)
             p.has_buttons = p.has_buttons or bool(m.reply_markup)
             p.edited = p.edited or bool(m.edit_date)
             if isinstance(m.media, MessageMediaPhoto):
-                p.media_refs.append(("photo", m))
+                p.media_refs.append(("photo", m, None))
             elif isinstance(m.media, MessageMediaDocument) and m.file and m.file.mime_type:
                 if m.file.mime_type.startswith("video"):
                     p.has_video = True
-                    p.media_refs.append(("video_thumb", m))
+                    p.media_refs.append(("video", m, m))
                 elif m.file.mime_type.startswith("image"):
-                    p.media_refs.append(("photo", m))
+                    p.media_refs.append(("photo", m, None))
         return list(groups.values())
 
     async def download(self, post: SourcePost, dest: Path) -> list[str]:
         out = []
         dest.mkdir(parents=True, exist_ok=True)
-        for i, (kind, m) in enumerate(post.media_refs):
+        for i, (kind, m, _) in enumerate(post.media_refs):
             target = dest / f"{post.msg_id}_{i}"
             try:
                 if kind == "photo":
                     path = await self.client.download_media(m, file=str(target))
-                else:  # أكبر صورة مصغرة للفيديو كما نشرها المصدر
-                    path = await self.client.download_media(m, file=str(target), thumb=-1)
+                else:
+                    path = None
+                    if (m.file.size or 0) <= 50 * 1024 * 1024:
+                        vid = await self.client.download_media(m, file=str(target) + ".mp4")
+                        jpg = Path(str(target) + ".jpg")
+                        if vid and await asyncio.to_thread(extract_frame, Path(vid), jpg):
+                            path = str(jpg)
+                        if vid:
+                            Path(vid).unlink(missing_ok=True)
+                    if not path:  # أكبر صورة مصغرة للفيديو كما نشرها المصدر
+                        path = await self.client.download_media(m, file=str(target), thumb=-1)
                 if path:
                     out.append(str(path))
             except Exception as e:
@@ -131,14 +181,15 @@ class WebSource:
     def _download(self, post: SourcePost, dest: Path) -> list[str]:
         out = []
         dest.mkdir(parents=True, exist_ok=True)
-        for i, (kind, link) in enumerate(post.media_refs):
+        def fetch(link):
+            r = self.session.get(link, timeout=60)
+            r.raise_for_status()
+            return r.content
+        for i, (kind, link, thumb) in enumerate(post.media_refs):
             try:
-                r = self.session.get(link, timeout=30)
-                r.raise_for_status()
-                ext = ".jpg" if "jpeg" in r.headers.get("content-type", "jpeg") else ".png"
-                p = dest / f"{post.msg_id}_{i}{ext}"
-                p.write_bytes(r.content)
-                out.append(str(p))
+                path = _save_media(kind, fetch, link, thumb, dest, f"{post.msg_id}_{i}")
+                if path:
+                    out.append(path)
             except Exception as e:
                 log.warning("فشل تحميل صورة %s: %s", post.msg_id, e)
         return out
@@ -185,10 +236,14 @@ class BotSource:
                                text="", url=f"https://t.me/{self.cfg.source_channel}/{m['message_id']}")
                 if old and edited:
                     p.media_refs, p.text, p.date = old.media_refs, old.text, old.date
+                    p.msg_ids = old.msg_ids
                 p.edited = edited
             else:
                 p = entry[0]
             p.msg_id = min(p.msg_id, m["message_id"])
+            if m["message_id"] not in p.msg_ids:
+                p.msg_ids.append(m["message_id"])
+                p.msg_ids.sort()
             p.url = f"https://t.me/{self.cfg.source_channel}/{p.msg_id}"
             text = m.get("text") or m.get("caption") or ""
             if text and (edited or not p.text):
@@ -197,15 +252,16 @@ class BotSource:
             p.has_buttons = p.has_buttons or bool(m.get("reply_markup"))
             if not edited:
                 if m.get("photo"):
-                    p.media_refs.append(("photo", m["photo"][-1]["file_id"]))
+                    p.media_refs.append(("photo", m["photo"][-1]["file_id"], None))
                 elif m.get("video") or m.get("animation"):
                     v = m.get("video") or m.get("animation")
                     p.has_video = True
                     th = v.get("thumbnail") or v.get("thumb")
-                    if th:
-                        p.media_refs.append(("video_thumb", th["file_id"]))
+                    vid = v["file_id"] if (v.get("file_size") or 0) <= MAX_BOT_VIDEO else None
+                    if vid or th:
+                        p.media_refs.append(("video", vid, th["file_id"] if th else None))
                 elif (m.get("document") or {}).get("mime_type", "").startswith("image/"):
-                    p.media_refs.append(("photo", m["document"]["file_id"]))
+                    p.media_refs.append(("photo", m["document"]["file_id"], None))
             self.buffer[key] = (p, time.monotonic())
             # نحتفظ بآخر 100 منشور فقط
             if len(self.buffer) > 100:
@@ -223,12 +279,11 @@ class BotSource:
     def _download(self, post: SourcePost, dest: Path) -> list[str]:
         out = []
         dest.mkdir(parents=True, exist_ok=True)
-        for i, (kind, file_id) in enumerate(post.media_refs):
+        for i, (kind, file_id, thumb) in enumerate(post.media_refs):
             try:
-                data = self.bot.get_file_bytes(file_id)
-                p = dest / f"{post.msg_id}_{i}.jpg"
-                p.write_bytes(data)
-                out.append(str(p))
+                path = _save_media(kind, self.bot.get_file_bytes, file_id, thumb, dest, f"{post.msg_id}_{i}")
+                if path:
+                    out.append(path)
             except Exception as e:
                 log.warning("فشل تحميل صورة %s: %s", post.msg_id, e)
         return out
@@ -267,14 +322,18 @@ def parse_preview_html(html: str, channel: str) -> list[SourcePost]:
         for a in msg.select("a.tgme_widget_message_photo_wrap"):
             m = _BG.search(a.get("style", ""))
             if m:
-                p.media_refs.append(("photo", m.group(1)))
-        for th in msg.select("i.tgme_widget_message_video_thumb"):
-            m = _BG.search(th.get("style", ""))
+                p.media_refs.append(("photo", m.group(1), None))
+        for wrap in msg.select(".tgme_widget_message_video_player"):
             p.has_video = True
-            if m:
-                p.media_refs.append(("video_thumb", m.group(1)))
+            th = wrap.select_one("i.tgme_widget_message_video_thumb")
+            m = _BG.search(th.get("style", "")) if th else None
+            v = wrap.select_one("video[src]")
+            if v or m:
+                p.media_refs.append(("video", v["src"] if v else None, m.group(1) if m else None))
         if msg.select_one("video") is not None:
             p.has_video = True
+        n = max(1, len(p.media_refs))
+        p.msg_ids = list(range(msg_id, msg_id + n))
         posts.append(p)
     return posts
 
