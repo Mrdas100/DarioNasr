@@ -116,8 +116,8 @@ def _natural_cut(words: list[str]) -> int:
         w = words[i]
         if w.startswith("و") and w[1:3] == "ال" and len(w) > 4:
             found[3] = found[3] or i          # أول عطف
-        elif w in MEDIUM_BREAKS:
-            found[2] = i
+        elif w in MEDIUM_BREAKS or (w.startswith("و") and len(w) >= 3 and found[2] is None):
+            found[2] = found[2] or i
         elif w in WEAK_BREAKS:
             found[1] = i
     for level in (3, 2, 1):
@@ -126,9 +126,40 @@ def _natural_cut(words: list[str]) -> int:
     return min(9, len(words))
 
 
+BODY_MAX = 34
+
+
+def _body_from(rest: str) -> str:
+    """تفاصيل الخبر حرفيًا من المصدر، وإن طالت نقف عند نهاية جملة أو عبارة بدل حذفها"""
+    rest = re.sub(r"\s+", " ", rest or "").strip()
+    rest = re.sub(r"^و(?=في |هو |هي |كان |قد |ي|ت)", "", rest)   # لا تبدأ التفاصيل بحرف عطف
+    rest = re.sub(r"[.…]{2,}", "", rest)
+    if not rest:
+        return ""
+    words = rest.split()
+    if len(words) <= BODY_MAX:
+        return tidy_punct(rest)
+    clipped = " ".join(words[:BODY_MAX])
+    cut = max(clipped.rfind(c) for c in (".", "!", "؟", "?", "،", ","))
+    if cut >= len(clipped) // 2:
+        return tidy_punct(clipped[:cut])
+    w = words[:BODY_MAX]
+    for i in range(len(w) - 1, len(w) // 2, -1):
+        if w[i].startswith("و") and len(w[i]) >= 3:
+            return tidy_punct(" ".join(w[:i]))
+    return tidy_punct(clipped)
+
+
 def rule_based(raw: str) -> EditResult:
     """محرر احتياطي محافظ: يقتطع من نص المصدر حرفيًا"""
-    text = SOURCE_SIGNATURES.sub(" ", strip_decor(raw))
+    # أسطر لا تخص الخبر: وسوم فقط، روابط حجز/متجر، أسطر تنتهي بنقطتين بلا محتوى
+    kept = []
+    for line in (raw or "").split("\n"):
+        bare = re.sub(r"#\S+", "", strip_decor(re.sub(r"#\S+", "", line))).strip(" :.-|!")
+        if not bare or re.match(r"^(رابط|للحجز|الحجز|للتذاكر|التذاكر|المتجر|للاشتراك)\b", bare):
+            continue
+        kept.append(re.sub(r"#\S+", "", line))
+    text = SOURCE_SIGNATURES.sub(" ", strip_decor("\n".join(kept)))
     # وسوم بداية الخبر مثل "عاجل — رسمياً:" قد تتكرر
     label = r"^\s*(عاجل|خاص|رسمي[اًً]*|مصادر|مصدر|تقارير)\s*[:\-|—–]+\s*"
     while re.match(label, text):
@@ -137,19 +168,25 @@ def rule_based(raw: str) -> EditResult:
     lines = [l.strip(" -–•|") for l in text.split("\n") if l.strip(" -–•|")]
     if not lines:
         return EditResult(publishable=False, skip_reason="لا يوجد نص", template="general", headline="", is_rumor=False)
+    # سطر نداء قصير مثل "ياعالمين !!!" ليس عنوانًا: العنوان من السطر الذي بعده
+    if len(lines) > 1 and len(tidy_punct(lines[0]).split()) < 3:
+        lines = lines[1:]
     first = lines[0]
     sentences = re.split(r"(?<=[.!؟?])\s+|\s+[-–]\s+", first)
     headline = tidy_punct(sentences[0])
-    rest = " ".join(sentences[1:] + lines[1:])
+    parts = [re.sub(r"\s*[.…]{2,}\s*$", "", x.strip()) for x in sentences[1:] + lines[1:]]
+    parts = [x for x in parts if x]
+    # كل سطر في المصدر جملة مستقلة: نفصلها بفاصلة حتى لا تلتصق الأرقام بما قبلها
+    rest = " ".join(x if re.search(r"[.!؟?،,:]$", x.strip()) or i == len(parts) - 1 else x.strip() + "،"
+                    for i, x in enumerate(parts))
     if len(headline.split()) > 13:  # جملة قصيرة نسبيًا تبقى كاملة بدل قطعها
         words = headline.split()
         cut = _natural_cut(words)
-        headline, rest = " ".join(words[:cut]), " ".join(words[cut:] + [rest]).strip()
-    body = tidy_punct(clip_words(rest, 16)) if rest else ""
-    if body and len(rest.split()) > 16:
-        # لا نقطع جملة في منتصفها بشكل مضلل: نكتفي بالجملة الأولى إن أمكن
-        first_sent = re.split(r"(?<=[.!؟?،])\s+", rest)[0]
-        body = tidy_punct(first_sent) if len(first_sent.split()) <= 16 else ""
+        tail = re.sub(r"\s*[.…]{2,}\s*$", "", " ".join(words[cut:]))
+        if rest and not re.search(r"[.!؟?،,:]$", tail):
+            tail += "،"
+        headline, rest = " ".join(words[:cut]), (tail + " " + rest).strip()
+    body = _body_from(rest)
     template = classify(raw)
     rumor = is_rumor_text(raw)
     norm = normalize_ar(raw)

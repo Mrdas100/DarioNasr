@@ -374,7 +374,7 @@ class Renderer:
         else:  # breaking / general
             b.append(("text:headline", s.headline, 80 * k, 52, 3, RED, 0))
             if s.body:
-                b.append(("text:body", s.body, 58 * k, 40, 3, BLACK, 12))
+                b.append(("text:body", s.body, 54 * k, 36, 6, BLACK, 16))
         return b
 
 

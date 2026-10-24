@@ -14,8 +14,9 @@ from dataclasses import dataclass
 from .textutil import normalize_ar, numbers
 
 STOP = set("في من على الى عن مع ان او ثم قد لقد هذا هذه ذلك تلك التي الذي بعد قبل عند كل حتى منذ و يا ما لا لم لن هو هي هم".split())
-UPDATE_WORDS = ["رسميا", "رسمي", "تحديث", "محدث", "تأكيد", "تاكيد", "اكتمل", "اكتملت", "تم ", "حسم", "نفي", "ينفي",
-                "تراجع", "عاجل", "الان", "مستجدات", "اخر", "نهائي", "بشكل نهائي"]
+# كلمات تدل على تطور الخبر نفسه (عاجل والآن ليست تحديثًا)
+UPDATE_WORDS = ["رسميا", "رسمي", "تحديث", "محدث", "تأكيد", "تاكيد", "اكتمل", "اكتملت", "حسم", "نفي", "ينفي",
+                "تراجع", "مستجدات", "نهائي", "بشكل نهائي"]
 
 
 def _grams(t: str) -> Counter:
@@ -77,7 +78,7 @@ def heuristic(raw: str, norm: str, history) -> tuple[DedupResult, list]:
         if (new_nums - old_nums) or has_update_word:
             return DedupResult("update", row["id"], row["msg_id"], score, "تفاصيل أو أرقام جديدة"), cands
         return DedupResult("duplicate", row["id"], row["msg_id"], score, "نفس الخبر بصياغة أخرى"), cands
-    if score >= 0.45 and (has_update_word or (new_nums - old_nums)):
+    if score >= 0.5 and has_update_word:
         return DedupResult("update", row["id"], row["msg_id"], score, "تطور لخبر سابق"), cands
     # منطقة رمادية: يحسمها نموذج اللغة إن توفر
     return DedupResult("new", score=score, reason="غير محسوم"), cands
