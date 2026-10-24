@@ -198,6 +198,8 @@ def test_video_snap(svc, tmp_path):
     out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,width,height",
                           "-of", "csv=p=0", row["png_path"]], capture_output=True, text=True).stdout
     assert "video,1080,1920" in out and "audio" in out
+    from daryo.video import duration
+    assert abs(duration(Path(row["png_path"])) - 3) < 0.3
 
 
 def test_long_text_keeps_photo(svc):
