@@ -149,3 +149,12 @@ def test_bot_source_album():
     src.on_channel_post({**base, "message_id": 11, "caption": "عاجل النصر يفوز 2-0"}, True)
     p = asyncio.run(src.fetch_latest())[0]
     assert p.text.endswith("2-0") and len(p.media_refs) == 2
+
+
+def test_elongated_breaking_label():
+    from daryo.editor import rule_based, validate
+    t = "🚨🚨🚨 عاااااااااجل :  تعيين عصام الشوالي معلقا لمباراة النصر والهلال في الجولة القادمة من دوري روشن"
+    r = rule_based(t)
+    assert r.template == "breaking" and r.speaker == ""
+    assert r.headline.startswith("تعيين عصام الشوالي")
+    assert validate(r, t) == []

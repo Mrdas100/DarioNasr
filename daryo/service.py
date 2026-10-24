@@ -195,6 +195,10 @@ class Service:
             return
         lines = []
         for p in posts:
+            prev = self.db.known(p.msg_id)
+            if prev is not None and prev["status"] == "sent":
+                lines.append(f"{p.msg_id} | أُرسل سابقًا | {prev['headline'] or ''}")
+                continue
             try:
                 await self.process(p, src=web)
             except Exception as e:

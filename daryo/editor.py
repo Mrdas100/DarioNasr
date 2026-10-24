@@ -152,7 +152,7 @@ def rule_based(raw: str) -> EditResult:
         if m:
             words = tidy_punct(m.group(1)).split()
             speaker = " ".join(words[:_natural_cut(words)]) if len(words) > 10 else " ".join(words)
-            quote = tidy_punct(clip_words(m.group(2).strip(" \"«»"), 18))
+            quote = tidy_punct(clip_words(m.group(2).strip(" \"«»"), 12))
             headline, body = quote, ""
         else:
             template = "general"

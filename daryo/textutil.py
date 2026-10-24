@@ -26,6 +26,8 @@ def strip_decor(text: str) -> str:
     t = HASHTAG_RE.sub(lambda m: m.group(1).replace("_", " "), t)
     t = EMOJI_RE.sub(" ", t)
     t = t.replace(TATWEEL, "")
+    # الحروف الممطوطة مثل عاااااجل ← عاجل
+    t = re.sub(r"([\u0621-\u064A])\1{2,}", r"\1", t)
     t = re.sub(r"[ \t]+", " ", t)
     t = re.sub(r"\n\s*\n+", "\n", t)
     return t.strip()
