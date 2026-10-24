@@ -46,8 +46,22 @@ def extract_frame(video: Path, out: Path) -> bool:
     return False
 
 
+def _retry(fetch, tries: int = 4):
+    """أخطاء خوادم تيليجرام المؤقتة (500) لا تُسقط صورة الخبر"""
+    def run(ref):
+        for i in range(tries):
+            try:
+                return fetch(ref)
+            except Exception:
+                if i == tries - 1:
+                    raise
+                time.sleep(2 * (i + 1))
+    return run
+
+
 def _save_media(kind: str, fetch, ref, thumb, dest: Path, stem: str) -> str | None:
     """fetch(ref) -> bytes. للفيديو: لقطة من الفيديو نفسه وإلا الصورة المصغرة"""
+    fetch = _retry(fetch)
     if kind == "video":
         if ref is not None:
             try:
