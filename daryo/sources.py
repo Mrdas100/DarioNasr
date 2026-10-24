@@ -175,6 +175,7 @@ class BotSource:
             log.info("تجاهل منشور من قناة أخرى: %s", chat.get("username") or chat.get("id"))
             return
         key = m.get("media_group_id") or f"m{m['message_id']}"
+        log.info("استُقبل منشور من القناة %s%s", m["message_id"], " (تعديل)" if edited else "")
         with self.lock:
             entry = self.buffer.get(key)
             if entry is None or edited:

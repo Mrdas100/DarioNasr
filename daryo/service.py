@@ -34,6 +34,7 @@ HELP = """أوامر نظام داريو النصر:
 /hours 24 تشغيل طوال اليوم
 /now فحص القناة فورًا
 /last آخر 10 منشورات وحالتها
+/latest 2 إعادة معالجة آخر منشورين في القناة
 /test إرسال سنابة تجريبية"""
 
 
@@ -111,6 +112,10 @@ class Service:
                 return "لا يوجد سجل بعد"
             return "\n".join(f"{r['msg_id']} | {r['status']} | {(r['headline'] or r['reason'] or (r['raw_text'] or '')[:40])}"
                              for r in rows)
+        if cmd in ("/latest", "/retry"):
+            n = int(arg) if arg.strip().isdigit() else 2
+            asyncio.run_coroutine_threadsafe(self.reprocess_latest(min(n, 10)), self.loop)
+            return f"🔁 جارٍ معالجة آخر {min(n, 10)} منشورات من القناة"
         if cmd == "/test":
             asyncio.run_coroutine_threadsafe(self.send_test(), self.loop)
             return "🧪 جارٍ تجهيز سنابة تجريبية"
@@ -156,6 +161,11 @@ class Service:
             self.bot.start_command_loop(self.handle_command, ch)
         self.notify(f"🟢 بدأ نظام داريو النصر\n{self.status_text()}")
         await self.baseline()
+        n = int(os.environ.get("REPROCESS_ON_START", "0") or 0)
+        dep = os.environ.get("RAILWAY_DEPLOYMENT_ID", "local")
+        if n > 0 and self.db.get("reprocessed_deploy") != dep:
+            self.db.set("reprocessed_deploy", dep)
+            await self.reprocess_latest(min(n, 10))
         while True:
             try:
                 enabled = self.db.get("enabled")
@@ -174,6 +184,25 @@ class Service:
             except asyncio.TimeoutError:
                 pass
             self.wake.clear()
+
+    async def reprocess_latest(self, n: int):
+        """يجلب آخر n منشورات من صفحة القناة العامة ويعالجها من جديد حتى لو سبق تسجيلها"""
+        web = WebSource(self.cfg)
+        try:
+            posts = sorted(await web.fetch_latest(), key=lambda x: x.msg_id)[-n:]
+        except Exception as e:
+            self.alert(f"تعذر جلب آخر المنشورات: {e}")
+            return
+        lines = []
+        for p in posts:
+            try:
+                await self.process(p, src=web)
+            except Exception as e:
+                log.exception("فشل إعادة المعالجة")
+                self.alert(f"فشل معالجة {p.url}: {e}")
+            row = self.db.known(p.msg_id)
+            lines.append(f"{p.msg_id} | {row['status'] if row else '-'} | {(row['reason'] or row['headline'] or '') if row else ''}")
+        self.notify("نتيجة إعادة المعالجة:\n" + ("\n".join(lines) or "لا توجد منشورات"))
 
     async def baseline(self):
         """أول تشغيل: لا نغرق المحادثة بالأخبار القديمة"""
@@ -229,13 +258,15 @@ class Service:
                 continue
             await self.process(p)
 
-    async def process(self, p: SourcePost, edited_of=None):
+    async def process(self, p: SourcePost, edited_of=None, src=None):
         raw = p.text or ""
         norm = normalize_ar(raw)
         base = dict(posted_at=p.date.isoformat(), raw_text=raw, norm_text=norm, text_hash=text_hash(raw))
         msg_id = p.msg_id
         reason = reject_reason(p)
+        log.info("منشور %s: %s", msg_id, (raw or "[بدون نص]")[:60].replace("\n", " "))
         if reason:
+            log.info("استبعاد %s: %s", msg_id, reason)
             self.db.upsert_post(msg_id, status="skipped", reason=reason, **base)
             return
         history = [r for r in self.db.recent_published(self.cfg.dedup_window_hours) if r["msg_id"] != msg_id]
@@ -277,7 +308,7 @@ class Service:
         photos: list[str] = []
         img_note = ""
         if self.cfg.use_source_images and p.media_refs:
-            downloaded = await self.source.download(p, self.cfg.media_dir)
+            downloaded = await (src or self.source).download(p, self.cfg.media_dir)
             for ph in downloaded:
                 try:
                     check_image_file(ph)
