@@ -193,6 +193,8 @@ def rule_based(raw: str) -> EditResult:
     kicker = ""
     if not rumor and _has_any(norm, ["رسميا"]):
         kicker = "رسميًا"
+    if kicker:  # "رسميًا" تظهر مرة واحدة فوق العنوان
+        headline = re.sub(r"^\s*رسمي[اًً]*\s*[:\-|—–]*\s*", "", headline) or headline
     speaker = quote = number = number_caption = ""
     if len(lines) >= 2 and lines[0].rstrip().endswith(":"):
         template = "statement"

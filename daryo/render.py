@@ -133,7 +133,7 @@ class Renderer:
                 d.text((x, y), text, font=f, fill=WATERMARK, direction="rtl", language="ar")
 
     def logo(self, img: Image.Image, lay: Layout) -> tuple[int, int, int, int]:
-        box_w, box_h = 300, 280
+        box_w, box_h = 220, 200
         x1, y0 = W - SIDE + 10, SAFE_TOP + 4
         if self.logo_path:
             logo = Image.open(self.logo_path).convert("RGBA")
@@ -184,26 +184,61 @@ class Renderer:
 
     def bar(self, d, y: int, label: str, style: str, lay: Layout) -> int:
         if style == "breaking":
-            h = 150
-            d.rectangle((0, y, W, y + h), fill=RED)
-            spaced = "ـــ".join(label)          # عـــاجـــل بنفس روح المرجع
-            d.text((W / 2, y + h / 2 + 4), spaced, font=self.font(112), fill=WHITE, anchor="mm",
-                   direction="rtl", language="ar")
-        elif style == "dark":
             h = 116
+            d.rectangle((0, y, W, y + h), fill=RED)
+            size = 84
+            tw = self.width(label, size)
+            cy = y + h / 2
+            d.text((W / 2, cy + 3), label, font=self.font(size), fill=WHITE, anchor="mm",
+                   direction="rtl", language="ar")
+            # أيقونة 🚨 مرسومة (الخط المعتمد لا يحتوي رموزًا تعبيرية)
+            icon = self.siren_img(76)
+            for cx in (W / 2 + tw / 2 + 66, W / 2 - tw / 2 - 66):
+                self._canvas.paste(icon, (int(cx - 38), int(cy - 42)), icon)
+        elif style == "dark":
+            h = 96
             d.rectangle((0, y, W, y + h), fill=BLACK)
             d.rectangle((0, y + h, W, y + h + 12), fill=RED)
-            d.text((W / 2, y + h / 2 + 2), label, font=self.font(70), fill=WHITE, anchor="mm",
+            d.text((W / 2, y + h / 2 + 2), label, font=self.font(64), fill=WHITE, anchor="mm",
                    direction="rtl", language="ar")
             h += 12
         else:  # red
-            h = 120
+            h = 100
             d.rectangle((0, y, W, y + h), fill=RED)
-            d.text((W / 2, y + h / 2 + 2), label, font=self.font(76), fill=WHITE, anchor="mm",
+            d.text((W / 2, y + h / 2 + 2), label, font=self.font(68), fill=WHITE, anchor="mm",
                    direction="rtl", language="ar")
         lay.add("bar", (0, y, W, y + h))
         lay.texts.append(label)
         return y + h
+
+    _siren_cache: dict = {}
+
+    def siren_img(self, size: int) -> Image.Image:
+        """صفارة إنذار 🚨 مرسومة بالأبيض بدقة عالية ثم مصغّرة لحواف ناعمة"""
+        if size in self._siren_cache:
+            return self._siren_cache[size]
+        S = size * 4
+        im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        cx = S / 2
+        base_y = S * 0.86
+        dome_top = S * 0.34
+        r = S * 0.26
+        d.rounded_rectangle((cx - r * 1.35, base_y - S * 0.12, cx + r * 1.35, base_y), S * 0.03, fill=WHITE)
+        d.pieslice((cx - r, dome_top, cx + r, dome_top + 2 * r), 180, 360, fill=WHITE)
+        d.rectangle((cx - r, dome_top + r, cx + r, base_y - S * 0.12), fill=WHITE)
+        # لمعة داخل القبة
+        d.rounded_rectangle((cx - r * 0.55, dome_top + r * 0.45, cx - r * 0.25, base_y - S * 0.2), S * 0.02, fill=RED)
+        w = int(S * 0.07)
+        for (x0, y0, x1, y1) in ((cx, S * 0.05, cx, S * 0.22),
+                                 (cx - S * 0.30, S * 0.16, cx - S * 0.40, S * 0.06),
+                                 (cx + S * 0.30, S * 0.16, cx + S * 0.40, S * 0.06)):
+            d.line((x0, y0, x1, y1), fill=WHITE, width=w)
+            for x, y in ((x0, y0), (x1, y1)):
+                d.ellipse((x - w / 2, y - w / 2, x + w / 2, y + w / 2), fill=WHITE)
+        im = im.resize((size, size), Image.LANCZOS)
+        self._siren_cache[size] = im
+        return im
 
     def footer(self, img: Image.Image, lay: Layout) -> None:
         d = ImageDraw.Draw(img)
@@ -227,6 +262,20 @@ class Renderer:
         except Exception as e:  # صورة تالفة
             raise RenderError(f"تعذر فتح صورة الخبر: {e}")
         return im
+
+    @staticmethod
+    def crop_box(w: int, h: int, box_w: int, box_h: int, keep: float = 0.62) -> tuple[int, int, int, int]:
+        """قص من المنتصف يقرّب نسبة الصورة من المساحة المتاحة ليكبر حجمها، مع إبقاء 62٪ منها على الأقل"""
+        target = box_h / box_w
+        ratio = h / w
+        if ratio > target:      # أطول من المساحة: نقص من الأعلى والأسفل
+            nh = max(int(w * target), int(h * keep))
+            return 0, (h - nh) // 2, w, (h - nh) // 2 + nh
+        nw = max(int(h / target), int(w * keep))
+        return (w - nw) // 2, 0, (w - nw) // 2 + nw, h
+
+    def fit_crop(self, photo: Image.Image, box_w: int, box_h: int) -> Image.Image:
+        return photo.crop(self.crop_box(photo.width, photo.height, box_w, box_h))
 
     def place_photo(self, img: Image.Image, photo: Image.Image, top: int, bottom: int, lay: Layout) -> int:
         box_w = W - 2 * SIDE
@@ -256,6 +305,7 @@ class Renderer:
     def render(self, snap: Snap) -> tuple[Image.Image, Layout]:
         lay = Layout()
         img = Image.new("RGB", (W, H), WHITE)
+        self._canvas = img
         self.watermark(img)
         d = ImageDraw.Draw(img)
         logo_box = self.logo(img, lay)
@@ -267,7 +317,7 @@ class Renderer:
         if snap.is_rumor:
             self.chip(d, cx, SAFE_TOP + 24, "غير رسمي", False, lay)
 
-        y = max(logo_box[3], SAFE_TOP + 100) + 34
+        y = max(logo_box[3], SAFE_TOP + 100) + 24
         t = snap.template
         if t == "breaking":
             y = self.bar(d, y, TEMPLATE_AR["breaking"], "breaking", lay)
@@ -291,16 +341,16 @@ class Renderer:
         base_boxes, base_texts = list(lay.boxes), list(lay.texts)
         for k, drop_body in tiers:
             lay.boxes, lay.overflow, lay.texts = list(base_boxes), [], list(base_texts)
-            text_img, text_h = self._text_layer(snap, k, drop_body, max_w, lay)
-            if not has_photo or avail - text_h - 40 >= 460:
+            text_img, text_h = self._text_layer(snap, k, drop_body, max_w, lay, compact=has_photo)
+            if not has_photo or avail - text_h - 40 >= 760:
                 break
         avail = CONTENT_BOTTOM - content_top
         if has_photo:
             photo_space = avail - text_h - 40
             if photo_space < 400:
                 raise RenderError("النص طويل ولا يترك مساحة كافية للصورة")
-            # إن كانت الصورة عريضة يتوزع الفراغ بالتساوي فوق النص وتحت الصورة
             box_w = W - 2 * SIDE
+            photo = self.fit_crop(photo, box_w, photo_space)
             ph = min(photo_space, int(photo.height * min(box_w / photo.width, photo_space / photo.height)))
             slack = max(0, avail - text_h - 40 - ph)
             text_top = content_top + slack // 2
@@ -318,11 +368,15 @@ class Renderer:
         self.footer(img, lay)
         return img, lay
 
-    def _text_layer(self, snap: Snap, k: float, drop_body: bool, max_w: int, lay: Layout):
+    def _text_layer(self, snap: Snap, k: float, drop_body: bool, max_w: int, lay: Layout, compact=False):
         text_img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         td = ImageDraw.Draw(text_img)
         ty = 0
         for name, text, start, minimum, max_lines, color, gap in self._blocks(snap, k):
+            if compact:
+                # مع صورة أو فيديو: الوسائط هي الأساس والنص مختصر في أعلى التصميم
+                start, minimum = start * 0.82, minimum * 0.85
+                max_lines = min(max_lines, 2 if name in ("text:headline", "text:quote") else 3)
             if drop_body and name == "text:body":
                 continue
             minimum = min(int(minimum), int(start))
