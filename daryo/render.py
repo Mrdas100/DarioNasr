@@ -376,7 +376,7 @@ class Renderer:
             if compact:
                 # مع صورة أو فيديو: الوسائط هي الأساس والنص مختصر في أعلى التصميم
                 start, minimum = start * 0.82, minimum * 0.85
-                max_lines = min(max_lines, 2 if name in ("text:headline", "text:quote") else 3)
+                max_lines = min(max_lines, 2 if name in ("text:headline", "text:quote") else 4)
             if drop_body and name == "text:body":
                 continue
             minimum = min(int(minimum), int(start))

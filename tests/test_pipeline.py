@@ -215,3 +215,10 @@ def test_short_rumor_words_match_whole_words():
     from daryo.editor import is_rumor_text
     assert not is_rumor_text("🚨 عاجل كل ما قدمه رونالدو امام الفيصلي")
     assert is_rumor_text("قد يغيب رونالدو عن المباراة")
+
+
+def test_full_text_kept():
+    from daryo.editor import rule_based
+    r = rule_based("يعقـد السيـد آنج بوستيكوجلو عند الثالثة والنصف عصر غدٍ الثلاثاء، مؤتمرًا صحفيًا للحديث عن مباراة #النصر_الخلود\nوذلك في قاعة المؤتمرات بمقر دار #النصر 🎙️")
+    assert r.headline.endswith("الثلاثاء")
+    assert "النصر الخلود" in r.body and r.body.endswith("دار النصر")

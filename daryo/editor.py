@@ -126,7 +126,7 @@ def _natural_cut(words: list[str]) -> int:
     return min(9, len(words))
 
 
-BODY_MAX = 34
+BODY_MAX = 46
 
 
 def _body_from(rest: str) -> str:
@@ -158,7 +158,7 @@ def rule_based(raw: str) -> EditResult:
         bare = re.sub(r"#\S+", "", strip_decor(re.sub(r"#\S+", "", line))).strip(" :.-|!")
         if not bare or re.match(r"^(رابط|للحجز|الحجز|للتذاكر|التذاكر|المتجر|للاشتراك)\b", bare):
             continue
-        kept.append(re.sub(r"#\S+", "", line))
+        kept.append(line)  # الوسوم داخل الجملة تبقى كلمات (#النصر_الخلود ← النصر الخلود)
     text = SOURCE_SIGNATURES.sub(" ", strip_decor("\n".join(kept)))
     # وسوم بداية الخبر مثل "عاجل — رسمياً:" قد تتكرر
     label = r"^\s*(عاجل|خاص|رسمي[اًً]*|مصادر|مصدر|تقارير)\s*[:\-|—–]+\s*"
@@ -181,7 +181,10 @@ def rule_based(raw: str) -> EditResult:
                     for i, x in enumerate(parts))
     if len(headline.split()) > 13:  # جملة قصيرة نسبيًا تبقى كاملة بدل قطعها
         words = headline.split()
-        cut = _natural_cut(words)
+        # أفضل قطع: عند أول فاصلة تنهي عبارة كاملة
+        commas = [i + 1 for i, w in enumerate(words[:14]) if w.endswith(("،", ",")) and i >= 3]
+        cut = commas[0] if commas else _natural_cut(words)
+        words = [w.rstrip("،,") if i == cut - 1 else w for i, w in enumerate(words)]
         tail = re.sub(r"\s*[.…]{2,}\s*$", "", " ".join(words[cut:]))
         if rest and not re.search(r"[.!؟?،,:]$", tail):
             tail += "،"
