@@ -37,8 +37,7 @@ def reject_reason(post: SourcePost) -> str | None:
     if norm and _NON.match(norm):
         return "منشور تفاعلي وليس خبرًا"
     if len(clean) < 12 and not (post.media_refs and len(clean.split()) >= 2):
-        # منشور صور مع وصف قصير مثل "تدريب جديد" يُقبل لأن الصور هي الخبر
-        # صورة بلا نص كافٍ: لا يمكن كتابة خبر دقيق عنها دون اختلاق
+        # بلا نص كافٍ لا يُكتب خبر دون اختلاق، إلا منشور صور بوصف قصير مثل "تدريب جديد"
         return "لا يوجد نص كافٍ لصياغة خبر"
     if clean.endswith(("؟", "?")) and len(clean) < 70:
         return "سؤال للجمهور وليس خبرًا"
