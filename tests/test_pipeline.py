@@ -231,3 +231,10 @@ def test_album_collage(svc):
     row = svc.db.known(30)
     assert row["status"] == "sent"
     assert (svc.cfg.media_dir / "30_album.jpg").exists()
+
+
+def test_short_caption_album_accepted(svc):
+    p = post(31, "تدريـبٌ جديـد 💛")
+    p.media_refs = [("photo", "a"), ("photo", "b"), ("photo", "c"), ("photo", "d")]
+    run(svc.process(p))
+    assert svc.db.known(31)["status"] == "sent"
