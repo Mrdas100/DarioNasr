@@ -222,3 +222,12 @@ def test_full_text_kept():
     r = rule_based("يعقـد السيـد آنج بوستيكوجلو عند الثالثة والنصف عصر غدٍ الثلاثاء، مؤتمرًا صحفيًا للحديث عن مباراة #النصر_الخلود\nوذلك في قاعة المؤتمرات بمقر دار #النصر 🎙️")
     assert r.headline.endswith("الثلاثاء")
     assert "النصر الخلود" in r.body and r.body.endswith("دار النصر")
+
+
+def test_album_collage(svc):
+    p = post(30, "عاجل النصر يكشف عن قميصه الجديد للموسم المقبل")
+    p.media_refs = [("photo", "a"), ("photo", "b"), ("photo", "c"), ("photo", "d")]
+    run(svc.process(p))
+    row = svc.db.known(30)
+    assert row["status"] == "sent"
+    assert (svc.cfg.media_dir / "30_album.jpg").exists()

@@ -23,6 +23,7 @@ from .schedule import in_hours, parse_hours
 from .sources import BotSource, SourceError, WebSource, make_source
 from .telegram_bot import Bot
 from .textutil import normalize_ar
+from .collage import make_collage
 from .video import VideoError, compose, video_of
 
 log = logging.getLogger("daryo")
@@ -336,6 +337,15 @@ class Service:
             groups = [[ph] for ph in photos]
         else:
             groups = [photos]
+            stills = [ph for ph in photos if not video_of(ph)]
+            if len(stills) >= 2 and len(stills) == len(photos):
+                # ألبوم صور: كلها في التصميم كشبكة، والصور المفردة احتياط
+                try:
+                    grid = await asyncio.to_thread(make_collage, stills,
+                                                   self.cfg.media_dir / f"{msg_id}_album.jpg")
+                    groups = [[grid] + photos]
+                except Exception as e:
+                    log.warning("تعذر تجميع صور الألبوم %s: %s", msg_id, e)
 
         clean = lambda s: strip_unsupported(s, self.cfg.font_path)
         sent_paths = []
