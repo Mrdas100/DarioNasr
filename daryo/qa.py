@@ -9,6 +9,7 @@ from fontTools.ttLib import TTFont
 from PIL import Image, ImageStat
 
 from .config import APPROVED_FONT_SHA256
+from .emoji import is_emoji_char
 from .models import Snap
 from .render import FOOTER_TOP, H, SAFE_TOP, SIDE, W, Layout
 
@@ -39,12 +40,13 @@ def _cmap(path: str) -> frozenset[int]:
 
 def missing_glyphs(text: str, font_path: Path) -> set[str]:
     cmap = _cmap(str(font_path))
-    return {ch for ch in text if ch not in IGNORABLE and ord(ch) not in cmap}
+    # الإيموجي يُرسم بصور أبل وليس بالخط
+    return {ch for ch in text if ch not in IGNORABLE and ord(ch) not in cmap and not is_emoji_char(ch)}
 
 
 def strip_unsupported(text: str, font_path: Path) -> str:
     cmap = _cmap(str(font_path))
-    return "".join(ch for ch in text if ch in IGNORABLE or ord(ch) in cmap)
+    return "".join(ch for ch in text if ch in IGNORABLE or ord(ch) in cmap or is_emoji_char(ch))
 
 
 def check_snap_text(snap: Snap, font_path: Path) -> None:

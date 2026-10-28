@@ -20,12 +20,17 @@ BIDI_RE = re.compile("[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]")
 NUM_RE = re.compile(r"\d+(?:[.,٫]\d+)?")
 
 
-def strip_decor(text: str) -> str:
-    """يحذف الروابط والمعرفات والإيموجي ويحوّل الوسوم إلى كلمات"""
+def strip_decor(text: str, keep_emoji: bool = False) -> str:
+    """يحذف الروابط والمعرفات والإيموجي ويحوّل الوسوم إلى كلمات.
+    keep_emoji: يُبقي الإيموجي داخل الجملة لعرضه بصور أبل (وتُحذف زخارف بداية السطر)"""
     t = URL_RE.sub(" ", text or "")
     t = MENTION_RE.sub(" ", t)
     t = HASHTAG_RE.sub(lambda m: m.group(1).replace("_", " "), t)
-    t = EMOJI_RE.sub(" ", t)
+    if keep_emoji:
+        from .emoji import tidy
+        t = tidy(t)
+    else:
+        t = EMOJI_RE.sub(" ", t)
     t = t.replace(TATWEEL, "")
     t = BIDI_RE.sub("", t)
     # الحروف الممطوطة مثل عاااااجل ← عاجل

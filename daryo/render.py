@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps, features
 
+from .emoji import CLUSTER, EmojiStore, runs
 from .models import TEMPLATE_AR, Snap
 
 W, H = 1080, 1920
@@ -42,7 +43,9 @@ class Layout:
 
 
 class Renderer:
-    def __init__(self, font_path: Path, logo_path: Path | None, handle: str, account_name: str):
+    def __init__(self, font_path: Path, logo_path: Path | None, handle: str, account_name: str,
+                 emoji: EmojiStore | None = None):
+        self.emoji = emoji or EmojiStore(download=False)
         if not features.check("raqm"):
             raise RenderError("مكتبة Raqm غير متوفرة: لا يمكن تشكيل العربية بشكل صحيح")
         self.font_path = str(font_path)
@@ -58,7 +61,45 @@ class Renderer:
         return self._cache[size]
 
     def width(self, text: str, size: int) -> float:
-        return self.font(size).getlength(text, direction="rtl", language="ar")
+        parts = self._runs(text)
+        if parts is None:
+            return self.font(size).getlength(text, direction="rtl", language="ar")
+        es, gap = self._esize(size)
+        return sum(es + 2 * gap if is_e else self.font(size).getlength(t, direction="rtl", language="ar")
+                   for is_e, t in parts)
+
+    # ---------- الإيموجي داخل النص ----------
+    @staticmethod
+    def _esize(size: int) -> tuple[int, int]:
+        return int(size * 0.92), max(6, int(size * 0.2))
+
+    def _runs(self, text: str):
+        """None إن لم يكن في السطر إيموجي، وإلا أجزاء النص والإيموجي المتوفر بصورة أبل"""
+        if not CLUSTER.search(text):
+            return None
+        out = []
+        for is_e, t in runs(text):
+            if is_e:
+                if self.emoji.get(t) is not None:
+                    out.append((True, t))
+            elif t.strip():
+                out.append((False, t.strip()))
+        return out
+
+    def _draw_line(self, d, x_right: float, y: int, line: str, size: int, color) -> None:
+        """يرسم السطر من اليمين لليسار: كلمات بخط Arial وإيموجي بصور أبل"""
+        f = self.font(size)
+        es, gap = self._esize(size)
+        x = x_right
+        for is_e, t in self._runs(line):
+            if is_e:
+                im = self.emoji.get(t).resize((es, es), Image.LANCZOS)
+                x -= gap + es
+                self._target.paste(im, (int(x), int(y + size * 0.16)), im)
+                x -= gap
+            else:
+                d.text((x, y), t, font=f, fill=color, anchor="ra", direction="rtl", language="ar")
+                x -= f.getlength(t, direction="rtl", language="ar")
 
     def wrap(self, text: str, size: int, max_w: int) -> list[str]:
         lines, cur = [], ""
@@ -108,7 +149,10 @@ class Renderer:
         lay.fonts.add(self.font_path)
         top = y
         for line in lines:
-            if align == "center":
+            if self._runs(line) is not None:
+                xr = W / 2 + self.width(line, size) / 2 if align == "center" else x_right
+                self._draw_line(d, xr, y, line, size, color)
+            elif align == "center":
                 d.text((W / 2, y), line, font=f, fill=color, anchor="ma", direction="rtl", language="ar")
             else:
                 d.text((x_right, y), line, font=f, fill=color, anchor="ra", direction="rtl", language="ar")
@@ -384,6 +428,7 @@ class Renderer:
 
     def _text_layer(self, snap: Snap, k: float, drop_body: bool, max_w: int, lay: Layout, compact=False):
         text_img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        self._target = text_img
         td = ImageDraw.Draw(text_img)
         ty = 0
         for name, text, start, minimum, max_lines, color, gap in self._blocks(snap, k):

@@ -24,6 +24,7 @@ from .sources import BotSource, SourceError, WebSource, make_source
 from .telegram_bot import Bot
 from .textutil import normalize_ar
 from .collage import make_collage
+from .emoji import EmojiStore
 from .video import VideoError, compose, video_of
 
 log = logging.getLogger("daryo")
@@ -58,7 +59,8 @@ class Service:
                 raise SystemExit("وضع SOURCE_MODE=bot يحتاج BOT_TOKEN و OWNER_CHAT_ID")
             self.source.attach(self.bot)
         self.editor = Editor(cfg)
-        self.renderer = Renderer(cfg.font_path, cfg.logo_path, cfg.snap_handle, cfg.account_name)
+        self.renderer = Renderer(cfg.font_path, cfg.logo_path, cfg.snap_handle, cfg.account_name,
+                                 emoji=EmojiStore(cfg.data_dir / "emoji"))
         self.wake = asyncio.Event()
         self.loop: asyncio.AbstractEventLoop | None = None
         self.fail_count = 0

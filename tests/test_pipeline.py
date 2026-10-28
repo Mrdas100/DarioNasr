@@ -221,7 +221,7 @@ def test_full_text_kept():
     from daryo.editor import rule_based
     r = rule_based("يعقـد السيـد آنج بوستيكوجلو عند الثالثة والنصف عصر غدٍ الثلاثاء، مؤتمرًا صحفيًا للحديث عن مباراة #النصر_الخلود\nوذلك في قاعة المؤتمرات بمقر دار #النصر 🎙️")
     assert r.headline.endswith("الثلاثاء")
-    assert "النصر الخلود" in r.body and r.body.endswith("دار النصر")
+    assert "النصر الخلود" in r.body and r.body.rstrip(" 🎙️").endswith("دار النصر")
 
 
 def test_album_collage(svc):
@@ -238,3 +238,23 @@ def test_short_caption_album_accepted(svc):
     p.media_refs = [("photo", "a"), ("photo", "b"), ("photo", "c"), ("photo", "d")]
     run(svc.process(p))
     assert svc.db.known(31)["status"] == "sent"
+
+
+def test_inline_emoji_rendered(tmp_path):
+    from PIL import Image
+    from daryo.config import Config
+    from daryo.editor import rule_based, to_snap
+    from daryo.emoji import EmojiStore
+    from daryo.qa import check_render, check_snap_text
+    from daryo.render import Renderer
+    for code, color in (("1f49b", (255, 200, 0, 255)), ("1f981", (200, 120, 0, 255))):
+        Image.new("RGBA", (64, 64), color).save(tmp_path / f"{code}.png")
+    c = Config()
+    rd = Renderer(c.font_path, c.logo_path, c.snap_handle, c.account_name,
+                  emoji=EmojiStore(tmp_path, download=False))
+    r = rule_based("🚨🚨🚨 نيو لوك قلب الاسد انييغو مارتينيز 💛🦁")
+    assert r.headline.endswith("💛🦁") and "🚨" not in r.headline
+    snap = to_snap(r, PHOTO, "u", False, lambda s: s)
+    check_snap_text(snap, c.font_path)
+    img, lay = rd.render(snap)
+    assert check_render(img, lay, snap) == []

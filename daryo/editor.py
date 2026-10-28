@@ -159,7 +159,7 @@ def rule_based(raw: str) -> EditResult:
         if not bare or re.match(r"^(رابط|للحجز|الحجز|للتذاكر|التذاكر|المتجر|للاشتراك)\b", bare):
             continue
         kept.append(line)  # الوسوم داخل الجملة تبقى كلمات (#النصر_الخلود ← النصر الخلود)
-    text = SOURCE_SIGNATURES.sub(" ", strip_decor("\n".join(kept)))
+    text = SOURCE_SIGNATURES.sub(" ", strip_decor("\n".join(kept), keep_emoji=True))
     # وسوم بداية الخبر مثل "عاجل — رسمياً:" قد تتكرر
     label = r"^\s*(عاجل|خاص|رسمي[اًً]*|مصادر|مصدر|تقارير)\s*[:\-|—–]+\s*"
     while re.match(label, text):
