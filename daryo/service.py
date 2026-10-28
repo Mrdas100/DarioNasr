@@ -166,6 +166,9 @@ class Service:
         await self.baseline()
         n = int(os.environ.get("REPROCESS_ON_START", "0") or 0)
         dep = os.environ.get("RAILWAY_DEPLOYMENT_ID", "local")
+        if os.environ.get("TEST_ON_START") == "1" and self.db.get("tested_deploy") != dep:
+            self.db.set("tested_deploy", dep)   # نموذج تصميم واحد بعد تحديث الشكل
+            await self.send_test()
         if n > 0 and self.db.get("reprocessed_deploy") != dep:
             self.db.set("reprocessed_deploy", dep)
             ids = {int(x) for x in os.environ.get("REPROCESS_IDS", "").split(",") if x.strip().isdigit()}

@@ -192,7 +192,7 @@ class Renderer:
             d.text((W / 2, cy + 3), label, font=self.font(size), fill=WHITE, anchor="mm",
                    direction="rtl", language="ar")
             # أيقونة 🚨 مرسومة (الخط المعتمد لا يحتوي رموزًا تعبيرية)
-            icon = self.siren_img(76)
+            icon = self.emoji_img("1f6a8", 76) or self.siren_img(76)
             for cx in (W / 2 + tw / 2 + 66, W / 2 - tw / 2 - 66):
                 self._canvas.paste(icon, (int(cx - 38), int(cy - 42)), icon)
         elif style == "dark":
@@ -212,6 +212,20 @@ class Renderer:
         return y + h
 
     _siren_cache: dict = {}
+
+    def emoji_img(self, code: str, size: int) -> Image.Image | None:
+        """إيموجي أبل من assets/emoji (يُنزّل وقت البناء)، وإلا None فنرسم الأيقونة بأنفسنا"""
+        key = (code, size)
+        if key not in self._siren_cache:
+            p = Path(__file__).resolve().parent.parent / "assets" / "emoji" / f"{code}.png"
+            im = None
+            if p.exists():
+                try:
+                    im = Image.open(p).convert("RGBA").resize((size, size), Image.LANCZOS)
+                except Exception:
+                    im = None
+            self._siren_cache[key] = im
+        return self._siren_cache[key]
 
     def siren_img(self, size: int) -> Image.Image:
         """صفارة إنذار 🚨 مرسومة بالأبيض بدقة عالية ثم مصغّرة لحواف ناعمة"""
