@@ -205,9 +205,9 @@ class Service:
         """يجلب آخر n منشورات من صفحة القناة العامة ويعالجها من جديد حتى لو سبق تسجيلها"""
         web = WebSource(self.cfg)
         try:
-            posts = sorted(await web.fetch_latest(), key=lambda x: x.msg_id)[-n:]
-            if only:
-                posts = [p for p in posts if p.msg_id in only]
+            posts = sorted(await web.fetch_latest(), key=lambda x: x.msg_id)
+            # المنشورات المحددة بالرقم لا يقيدها العدد
+            posts = [p for p in posts if p.msg_id in only] if only else posts[-n:]
             if videos_only:
                 posts = [p for p in posts if p.has_video]
         except Exception as e:
