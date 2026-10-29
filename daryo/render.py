@@ -25,6 +25,19 @@ GREY = (120, 120, 120)
 YELLOW = (255, 199, 0)
 
 
+NAVY = (10, 36, 84)
+INK = (11, 14, 22)
+
+# أنماط التصميم: clean أبيض بسيط، cinema داكن بخلفية من الصورة نفسها، brand بألوان النصر
+THEMES = {
+    "clean": dict(bg=WHITE, text=BLACK, accent=RED, muted=GREY, side=48, radius=32, footer_text=BLACK),
+    "cinema": dict(bg=INK, text=WHITE, accent=YELLOW, muted=(205, 208, 215), side=0, radius=0,
+                   footer_text=WHITE),
+    "brand": dict(bg=YELLOW, text=NAVY, accent=RED, muted=(55, 62, 80), side=56, radius=36,
+                  footer_text=WHITE),
+}
+
+
 class RenderError(Exception):
     pass
 
@@ -36,6 +49,7 @@ class Layout:
     overflow: list[str] = field(default_factory=list)
     texts: list[str] = field(default_factory=list)
     image_used: bool = False
+    photo_radius: int = 32
     image_scale: float = 0.0
     fonts: set[str] = field(default_factory=set)
 
@@ -45,8 +59,10 @@ class Layout:
 
 class Renderer:
     def __init__(self, font_path: Path, logo_path: Path | None, handle: str, account_name: str,
-                 emoji: EmojiStore | None = None):
+                 emoji: EmojiStore | None = None, style: str = "clean"):
         self.emoji = emoji or EmojiStore(download=False)
+        self.style = style if style in THEMES else "clean"
+        self.th = THEMES[self.style]
         if not features.check("raqm"):
             raise RenderError("مكتبة Raqm غير متوفرة: لا يمكن تشكيل العربية بشكل صحيح")
         self.font_path = str(font_path)
@@ -240,9 +256,9 @@ class Renderer:
         gap = 34
         total = hw + gap * 2 + aw
         x0 = W / 2 - total / 2
-        d.text((x0, y), self.handle, font=self.font(52), fill=RED, anchor="lm")
-        d.line((x0 + hw + gap, y - 20, x0 + hw + gap, y + 20), fill=GREY, width=3)
-        d.text((x0 + total, y), self.account_name, font=self.font(46), fill=BLACK, anchor="rm",
+        d.text((x0, y), self.handle, font=self.font(52), fill=YELLOW if self.style == "brand" else RED, anchor="lm")
+        d.line((x0 + hw + gap, y - 20, x0 + hw + gap, y + 20), fill=self.th["muted"], width=3)
+        d.text((x0 + total, y), self.account_name, font=self.font(46), fill=self.th["footer_text"], anchor="rm",
                direction="rtl", language="ar")
         lay.add("footer", (0, FOOTER_TOP, W, H))
         lay.texts += [self.handle, self.account_name]
@@ -260,13 +276,17 @@ class Renderer:
 
     def place_photo(self, img: Image.Image, photo: Image.Image, top: int, bottom: int, lay: Layout) -> int:
         """الصورة كاملة بلا قص ولا تشويه، بزوايا دائرية وظل ناعم"""
-        box_w = W - 2 * PHOTO_SIDE
+        box_w = W - 2 * self.th["side"]
         box_h = bottom - top
         scale = min(box_w / photo.width, box_h / photo.height)
         nw, nh = int(photo.width * scale), int(photo.height * scale)
         resized = photo.resize((nw, nh), Image.LANCZOS)
         x = (W - nw) // 2
-        r = PHOTO_RADIUS
+        # الصورة بعرض التصميم كاملًا بلا زوايا، وإلا زوايا دائرية
+        r = 0 if nw >= W - 2 else (self.th["radius"] or 28)
+        lay.photo_radius = r
+        if self.style == "brand":   # بطاقة بيضاء حول الصورة
+            ImageDraw.Draw(img).rounded_rectangle((x - 14, top - 14, x + nw + 14, top + nh + 14), r + 12, fill=WHITE)
         shadow = Image.new("RGBA", (nw + 80, nh + 80), (0, 0, 0, 0))
         ImageDraw.Draw(shadow).rounded_rectangle((40, 50, nw + 40, nh + 50), r, fill=(0, 0, 0, 60))
         shadow = shadow.filter(ImageFilter.GaussianBlur(18))
@@ -283,13 +303,14 @@ class Renderer:
     def render(self, snap: Snap) -> tuple[Image.Image, Layout]:
         """تصميم نظيف: شعار في المنتصف، الصورة كاملة بلا قص، شارة القالب، ثم العنوان والتفاصيل"""
         lay = Layout()
-        img = Image.new("RGB", (W, H), WHITE)
+        img = Image.new("RGB", (W, H), self.th["bg"])
         self._canvas = img
+        photo = self.load_photo(snap.image_path)
+        self.background(img, photo)
         d = ImageDraw.Draw(img)
         logo_box = self.logo(img, lay)
         top = logo_box[3] + 44
 
-        photo = self.load_photo(snap.image_path)
         has_photo = photo is not None
         max_w = W - 2 * SIDE - 20
         pill_h = 92
@@ -298,7 +319,7 @@ class Renderer:
         tiers = ([(1.3, False), (1.18, False), (1.06, False), (0.95, False), (0.85, False), (0.8, True),
                   (0.7, True)] if has_photo else [(1.22, False)])
         if has_photo:
-            box_w = W - 2 * PHOTO_SIDE
+            box_w = W - 2 * self.th["side"]
             want = min(photo.height * min(box_w / photo.width, 2.2), 700)
         base_boxes, base_texts = list(lay.boxes), list(lay.texts)
         for k, drop_body in tiers:
@@ -312,7 +333,7 @@ class Renderer:
             space = bottom - top - block_h - 48
             if space < 420:
                 raise RenderError("النص طويل ولا يترك مساحة كافية للصورة")
-            box_w = W - 2 * PHOTO_SIDE
+            box_w = W - 2 * self.th["side"]
             scale = min(box_w / photo.width, space / photo.height)
             ph = int(photo.height * scale)
             slack = max(0, space - ph)
@@ -326,12 +347,32 @@ class Renderer:
         self.footer(img, lay)
         return img, lay
 
+    def background(self, img: Image.Image, photo: Image.Image | None) -> None:
+        if self.style == "cinema":
+            # خلفية من الصورة نفسها: مموهة وداكنة، ثم تدرج للأسود أسفل التصميم
+            if photo is not None:
+                bg = ImageOps.fit(photo, (W // 4, H // 4), Image.LANCZOS).filter(ImageFilter.GaussianBlur(10))
+                bg = bg.resize((W, H), Image.BICUBIC)
+                img.paste(Image.blend(bg, Image.new("RGB", (W, H), INK), 0.62))
+            grad = Image.linear_gradient("L").resize((W, H))
+            img.paste(Image.new("RGB", (W, H), INK), (0, 0), grad.point(lambda v: int(v * 0.85)))
+        elif self.style == "brand":
+            # أشرطة مائلة خفيفة بلون أغمق قليلًا
+            d = ImageDraw.Draw(img)
+            for x in range(-H, W, 120):
+                d.polygon([(x, 0), (x + 46, 0), (x + 46 + H, H), (x + H, H)], fill=(250, 190, 0))
+            d.rectangle((0, FOOTER_TOP - 6, W, H), fill=NAVY)
+
     def pill(self, d, y: int, snap: Snap, lay: Layout) -> int:
         """شارة القالب في المنتصف، وبجانبها شارات تحديث / غير رسمي"""
         t = snap.template
         label = TEMPLATE_AR.get(t, "")
         fill, color = {"breaking": (RED, WHITE), "stats": (YELLOW, BLACK),
                        "statement": (BLACK, WHITE), "transfer": (BLACK, WHITE)}.get(t, (RED, WHITE))
+        if self.style == "cinema" and fill == BLACK:
+            fill, color = WHITE, BLACK
+        if self.style == "brand" and fill in (BLACK, YELLOW):
+            fill, color = NAVY, WHITE
         size, h = 54, 92
         icon = self.emoji_img("1f6a8", 64) if t == "breaking" else None
         if t == "breaking" and icon is None:
@@ -404,31 +445,34 @@ class Renderer:
     def _blocks(self, s: Snap, k: float):
         """(اسم، نص، حجم البداية، أدنى حجم، أقصى أسطر، لون، فراغ قبله)"""
         b = []
+        A, T, M = self.th["accent"], self.th["text"], self.th["muted"]
+        if self.style == "cinema":
+            A = WHITE if s.template == "breaking" else YELLOW
         if s.kicker:
-            b.append(("text:kicker", s.kicker, 96 * k, 70, 1, RED, 0))
+            b.append(("text:kicker", s.kicker, 96 * k, 70, 1, A, 0))
         if s.template == "statement":
             if s.speaker:
-                b.append(("text:speaker", s.speaker, 66 * k, 46, 1, BLACK, 6))
+                b.append(("text:speaker", s.speaker, 66 * k, 46, 1, T, 6))
             quote = s.quote or s.headline
-            b.append(("text:quote", quote, 74 * k, 46, 4, RED, 14))
+            b.append(("text:quote", quote, 74 * k, 46, 4, A, 14))
             if s.body and s.quote:
-                b.append(("text:body", s.body, 50 * k, 38, 2, BLACK, 14))
+                b.append(("text:body", s.body, 50 * k, 38, 2, T, 14))
         elif s.template == "stats":
             if s.number:
-                b.append(("text:number", s.number, 200 * k, 130, 1, RED, 0))
+                b.append(("text:number", s.number, 200 * k, 130, 1, A, 0))
             if s.number_caption:
-                b.append(("text:number_caption", s.number_caption, 60 * k, 44, 2, BLACK, 0))
-            b.append(("text:headline", s.headline, 64 * k, 44, 3, BLACK if s.number else RED, 18))
+                b.append(("text:number_caption", s.number_caption, 60 * k, 44, 2, T, 0))
+            b.append(("text:headline", s.headline, 64 * k, 44, 3, T if s.number else A, 18))
             if s.body:
-                b.append(("text:body", s.body, 50 * k, 38, 2, GREY, 10))
+                b.append(("text:body", s.body, 50 * k, 38, 2, M, 10))
         elif s.template == "transfer":
-            b.append(("text:headline", s.headline, 78 * k, 50, 3, BLACK, 0))
+            b.append(("text:headline", s.headline, 78 * k, 50, 3, T, 0))
             if s.body:
-                b.append(("text:body", s.body, 58 * k, 40, 3, RED, 12))
+                b.append(("text:body", s.body, 58 * k, 40, 3, A, 12))
         else:  # breaking / general
-            b.append(("text:headline", s.headline, 80 * k, 52, 3, RED if s.template == "breaking" else BLACK, 0))
+            b.append(("text:headline", s.headline, 80 * k, 52, 3, A if s.template == "breaking" else T, 0))
             if s.body:
-                b.append(("text:body", s.body, 54 * k, 36, 6, BLACK, 16))
+                b.append(("text:body", s.body, 54 * k, 36, 6, T, 16))
         return b
 
 

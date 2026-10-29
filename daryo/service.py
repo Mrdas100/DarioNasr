@@ -60,7 +60,7 @@ class Service:
             self.source.attach(self.bot)
         self.editor = Editor(cfg)
         self.renderer = Renderer(cfg.font_path, cfg.logo_path, cfg.snap_handle, cfg.account_name,
-                                 emoji=EmojiStore(cfg.data_dir / "emoji"))
+                                 emoji=EmojiStore(cfg.data_dir / "emoji"), style=cfg.design_style)
         self.wake = asyncio.Event()
         self.loop: asyncio.AbstractEventLoop | None = None
         self.fail_count = 0

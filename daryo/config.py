@@ -59,6 +59,7 @@ class Config:
     initial_backfill: int = field(default_factory=lambda: int(_env("INITIAL_BACKFILL", "0")))
     # first = سنابة واحدة للألبوم بأول صورة | each = سنابة لكل صورة
     album_mode: str = field(default_factory=lambda: _env("ALBUM_MODE", "first"))
+    design_style: str = field(default_factory=lambda: _env("DESIGN_STYLE", "clean"))   # clean | cinema | brand
     use_source_images: bool = field(default_factory=lambda: _bool("USE_SOURCE_IMAGES", True))
     dedup_window_hours: int = field(default_factory=lambda: int(_env("DEDUP_WINDOW_HOURS", "72")))
     alert_after_failures: int = field(default_factory=lambda: int(_env("ALERT_AFTER_FAILURES", "3")))
