@@ -14,14 +14,15 @@ SIDE = 64                 # هامش جانبي آمن
 SAFE_TOP = 150            # منطقة اسم الحساب في واجهة سناب
 FOOTER_TOP = 1690         # بداية شريط الحقوق
 FOOTER_TEXT_Y = 1748      # منتصف نص الحقوق (فوق منطقة الرد في سناب)
-CONTENT_BOTTOM = FOOTER_TOP - 36
+CONTENT_BOTTOM = FOOTER_TOP - 30
+PHOTO_SIDE = 48           # الصورة أعرض قليلًا من النص
+PHOTO_RADIUS = 32
 
 RED = (213, 18, 38)
-DARK_RED = (168, 10, 26)
 BLACK = (17, 17, 17)
 WHITE = (255, 255, 255)
 GREY = (120, 120, 120)
-WATERMARK = (247, 247, 247)
+YELLOW = (255, 199, 0)
 
 
 class RenderError(Exception):
@@ -166,94 +167,26 @@ class Renderer:
         return y
 
     # ---------- عناصر الهوية ----------
-    def watermark(self, img: Image.Image) -> None:
-        d = ImageDraw.Draw(img)
-        f = self.font(40)
-        text = f"{self.account_name}   {self.handle}"
-        tw = int(f.getlength(text, direction="rtl", language="ar")) + 120
-        for row, y in enumerate(range(-20, H, 170)):
-            off = -(row % 2) * tw // 2
-            for x in range(off, W + tw, tw):
-                d.text((x, y), text, font=f, fill=WATERMARK, direction="rtl", language="ar")
-
     def logo(self, img: Image.Image, lay: Layout) -> tuple[int, int, int, int]:
-        box_w, box_h = 220, 200
-        x1, y0 = W - SIDE + 10, SAFE_TOP + 4
+        box_w, box_h = 340, 220
+        y0 = SAFE_TOP + 6
         if self.logo_path:
             logo = Image.open(self.logo_path).convert("RGBA")
             bbox = logo.getchannel("A").getbbox()
             if bbox:
                 logo = logo.crop(bbox)
             logo.thumbnail((box_w, box_h), Image.LANCZOS)
-            pos = (x1 - logo.width, y0)
+            pos = ((W - logo.width) // 2, y0)
             img.paste(logo, pos, logo)
-            box = (pos[0], y0, x1, y0 + logo.height)
+            box = (pos[0], y0, pos[0] + logo.width, y0 + logo.height)
         else:
-            # شعار نصي مؤقت إلى أن يُرفع ملف الشعار الأصلي assets/logo.png
             d = ImageDraw.Draw(img)
-            parts = self.account_name.split(maxsplit=1)
-            first, rest = parts[0], (parts[1] if len(parts) > 1 else "")
-            size = 98
-            w1 = self.width(first, size)
-            w2 = self.width(rest, size) if rest else 0
-            gap = 18 if rest else 0
-            d.text((x1, y0), first, font=self.font(size), fill=BLACK, anchor="ra", direction="rtl", language="ar")
-            if rest:
-                d.text((x1 - w1 - gap, y0), rest, font=self.font(size), fill=RED, anchor="ra",
-                       direction="rtl", language="ar")
-            total = w1 + gap + w2
-            y = y0 + 128
-            d.rectangle((x1 - total, y, x1, y + 6), fill=BLACK)
-            d.text((x1, y + 14), self.handle, font=self.font(42), fill=BLACK, anchor="ra")
-            box = (int(x1 - total), y0, x1, y + 62)
+            d.text((W / 2, y0), self.account_name, font=self.font(96), fill=RED, anchor="ma",
+                   direction="rtl", language="ar")
+            box = (int(W / 2 - self.width(self.account_name, 96) / 2), y0,
+                   int(W / 2 + self.width(self.account_name, 96) / 2), y0 + 130)
         lay.add("logo", box)
         return box
-
-    def chip(self, d, x_left: int, y: int, text: str, filled: bool, lay: Layout) -> int:
-        size = 44
-        tw = self.width(text, size)
-        pad = 30
-        box = (x_left, y, x_left + tw + pad * 2, y + 78)
-        if filled:
-            d.rounded_rectangle(box, 39, fill=RED)
-            color = WHITE
-        else:
-            d.rounded_rectangle(box, 39, outline=BLACK, width=4, fill=WHITE)
-            color = BLACK
-        d.text(((box[0] + box[2]) / 2, y + 39), text, font=self.font(size), fill=color, anchor="mm",
-               direction="rtl", language="ar")
-        lay.add(f"chip:{text}", box)
-        lay.texts.append(text)
-        return box[2] + 14
-
-    def bar(self, d, y: int, label: str, style: str, lay: Layout) -> int:
-        if style == "breaking":
-            h = 116
-            d.rectangle((0, y, W, y + h), fill=RED)
-            size = 84
-            tw = self.width(label, size)
-            cy = y + h / 2
-            d.text((W / 2, cy + 3), label, font=self.font(size), fill=WHITE, anchor="mm",
-                   direction="rtl", language="ar")
-            # أيقونة 🚨 مرسومة (الخط المعتمد لا يحتوي رموزًا تعبيرية)
-            icon = self.emoji_img("1f6a8", 76) or self.siren_img(76)
-            for cx in (W / 2 + tw / 2 + 66, W / 2 - tw / 2 - 66):
-                self._canvas.paste(icon, (int(cx - 38), int(cy - 42)), icon)
-        elif style == "dark":
-            h = 96
-            d.rectangle((0, y, W, y + h), fill=BLACK)
-            d.rectangle((0, y + h, W, y + h + 12), fill=RED)
-            d.text((W / 2, y + h / 2 + 2), label, font=self.font(64), fill=WHITE, anchor="mm",
-                   direction="rtl", language="ar")
-            h += 12
-        else:  # red
-            h = 100
-            d.rectangle((0, y, W, y + h), fill=RED)
-            d.text((W / 2, y + h / 2 + 2), label, font=self.font(68), fill=WHITE, anchor="mm",
-                   direction="rtl", language="ar")
-        lay.add("bar", (0, y, W, y + h))
-        lay.texts.append(label)
-        return y + h
 
     _siren_cache: dict = {}
 
@@ -299,14 +232,18 @@ class Renderer:
         return im
 
     def footer(self, img: Image.Image, lay: Layout) -> None:
+        """توقيع بسيط في الأسفل: داريو النصر | N9rfc1"""
         d = ImageDraw.Draw(img)
-        d.rectangle((0, FOOTER_TOP, W, H), fill=RED)
-        d.rectangle((0, FOOTER_TOP, W, FOOTER_TOP + 6), fill=DARK_RED)
-        d.text((SIDE, FOOTER_TEXT_Y), self.handle, font=self.font(54), fill=WHITE, anchor="lm")
-        d.text((W - SIDE, FOOTER_TEXT_Y), self.account_name, font=self.font(50), fill=WHITE, anchor="rm",
+        y = FOOTER_TOP + 36
+        hw = self.font(52).getlength(self.handle)
+        aw = self.width(self.account_name, 46)
+        gap = 34
+        total = hw + gap * 2 + aw
+        x0 = W / 2 - total / 2
+        d.text((x0, y), self.handle, font=self.font(52), fill=RED, anchor="lm")
+        d.line((x0 + hw + gap, y - 20, x0 + hw + gap, y + 20), fill=GREY, width=3)
+        d.text((x0 + total, y), self.account_name, font=self.font(46), fill=BLACK, anchor="rm",
                direction="rtl", language="ar")
-        hw = self.font(54).getlength(self.handle)
-        d.line((SIDE + hw + 24, FOOTER_TEXT_Y - 22, SIDE + hw + 24, FOOTER_TEXT_Y + 22), fill=WHITE, width=3)
         lay.add("footer", (0, FOOTER_TOP, W, H))
         lay.texts += [self.handle, self.account_name]
 
@@ -321,39 +258,22 @@ class Renderer:
             raise RenderError(f"تعذر فتح صورة الخبر: {e}")
         return im
 
-    @staticmethod
-    def crop_box(w: int, h: int, box_w: int, box_h: int, keep: float = 0.62) -> tuple[int, int, int, int]:
-        """قص من المنتصف يقرّب نسبة الصورة من المساحة المتاحة ليكبر حجمها، مع إبقاء 62٪ منها على الأقل"""
-        target = box_h / box_w
-        ratio = h / w
-        if ratio > target:      # أطول من المساحة: نقص من الأعلى والأسفل
-            nh = max(int(w * target), int(h * keep))
-            return 0, (h - nh) // 2, w, (h - nh) // 2 + nh
-        nw = max(int(h / target), int(w * keep))
-        return (w - nw) // 2, 0, (w - nw) // 2 + nw, h
-
-    def fit_crop(self, photo: Image.Image, box_w: int, box_h: int) -> Image.Image:
-        return photo.crop(self.crop_box(photo.width, photo.height, box_w, box_h))
-
     def place_photo(self, img: Image.Image, photo: Image.Image, top: int, bottom: int, lay: Layout) -> int:
-        box_w = W - 2 * SIDE
+        """الصورة كاملة بلا قص ولا تشويه، بزوايا دائرية وظل ناعم"""
+        box_w = W - 2 * PHOTO_SIDE
         box_h = bottom - top
-        if box_h < 380:
-            raise RenderError("المساحة المتبقية للصورة غير كافية")
-        # احتواء بدون قص ولا تشويه للحفاظ على تفاصيل الصورة الأصلية
         scale = min(box_w / photo.width, box_h / photo.height)
         nw, nh = int(photo.width * scale), int(photo.height * scale)
         resized = photo.resize((nw, nh), Image.LANCZOS)
         x = (W - nw) // 2
-        # ظل ناعم وإطار وزوايا دائرية (لا تغيّر محتوى الصورة)
-        shadow = Image.new("RGBA", (nw + 60, nh + 60), (0, 0, 0, 0))
-        ImageDraw.Draw(shadow).rounded_rectangle((30, 36, nw + 30, nh + 36), 26, fill=(0, 0, 0, 70))
-        shadow = shadow.filter(ImageFilter.GaussianBlur(14))
-        img.paste(shadow, (x - 30, top - 30), shadow)
+        r = PHOTO_RADIUS
+        shadow = Image.new("RGBA", (nw + 80, nh + 80), (0, 0, 0, 0))
+        ImageDraw.Draw(shadow).rounded_rectangle((40, 50, nw + 40, nh + 50), r, fill=(0, 0, 0, 60))
+        shadow = shadow.filter(ImageFilter.GaussianBlur(18))
+        img.paste(shadow, (x - 40, top - 40), shadow)
         mask = Image.new("L", (nw, nh), 0)
-        ImageDraw.Draw(mask).rounded_rectangle((0, 0, nw - 1, nh - 1), 26, fill=255)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, nw - 1, nh - 1), r, fill=255)
         img.paste(resized, (x, top), mask)
-        ImageDraw.Draw(img).rounded_rectangle((x, top, x + nw - 1, top + nh - 1), 26, outline=(230, 230, 230), width=3)
         lay.add("photo", (x, top, x + nw, top + nh))
         lay.image_used = True
         lay.image_scale = scale
@@ -361,70 +281,91 @@ class Renderer:
 
     # ---------- التصميم ----------
     def render(self, snap: Snap) -> tuple[Image.Image, Layout]:
+        """تصميم نظيف: شعار في المنتصف، الصورة كاملة بلا قص، شارة القالب، ثم العنوان والتفاصيل"""
         lay = Layout()
         img = Image.new("RGB", (W, H), WHITE)
         self._canvas = img
-        self.watermark(img)
         d = ImageDraw.Draw(img)
         logo_box = self.logo(img, lay)
-
-        # شارات أعلى اليسار: تحديث / غير رسمي
-        cx = SIDE
-        if snap.is_update:
-            cx = self.chip(d, cx, SAFE_TOP + 24, "تحديث", True, lay)
-        if snap.is_rumor:
-            self.chip(d, cx, SAFE_TOP + 24, "غير رسمي", False, lay)
-
-        y = max(logo_box[3], SAFE_TOP + 100) + 24
-        t = snap.template
-        if t == "breaking":
-            y = self.bar(d, y, TEMPLATE_AR["breaking"], "breaking", lay)
-        elif t in ("statement", "transfer"):
-            y = self.bar(d, y, TEMPLATE_AR[t], "dark", lay)
-        elif t == "stats":
-            y = self.bar(d, y, TEMPLATE_AR["stats"], "red", lay)
-        else:
-            # الأخبار العامة: خط أحمر رفيع بدل الشريط
-            d.rectangle((SIDE, y + 8, W - SIDE, y + 16), fill=RED)
-            lay.add("rule", (SIDE, y + 8, W - SIDE, y + 16))
-            y += 16
-        content_top = y + 30
+        top = logo_box[3] + 44
 
         photo = self.load_photo(snap.image_path)
         has_photo = photo is not None
-        max_w = W - 2 * SIDE - (20 if photo is not None else 110)
-        avail = CONTENT_BOTTOM - content_top
-        # حجم النصوص أكبر في القالب النصي. مع الصورة نصغّر النص تدريجيًا حتى تتسع الصورة دائمًا
-        tiers = [(1.0, False), (0.9, False), (0.8, False), (0.8, True), (0.7, True)] if has_photo else [(1.22, False)]
+        max_w = W - 2 * SIDE - 20
+        pill_h = 92
+        bottom = CONTENT_BOTTOM
+        # أكبر نص ممكن بشرط أن تبقى الصورة بعرضها الكامل أو بارتفاع لا يقل عن 700
+        tiers = ([(1.3, False), (1.18, False), (1.06, False), (0.95, False), (0.85, False), (0.8, True),
+                  (0.7, True)] if has_photo else [(1.22, False)])
+        if has_photo:
+            box_w = W - 2 * PHOTO_SIDE
+            want = min(photo.height * min(box_w / photo.width, 2.2), 700)
         base_boxes, base_texts = list(lay.boxes), list(lay.texts)
         for k, drop_body in tiers:
             lay.boxes, lay.overflow, lay.texts = list(base_boxes), [], list(base_texts)
             text_img, text_h = self._text_layer(snap, k, drop_body, max_w, lay, compact=has_photo)
-            if not has_photo or avail - text_h - 40 >= 760:
+            if not has_photo or bottom - top - (pill_h + 40 + text_h + 48) >= want:
                 break
-        avail = CONTENT_BOTTOM - content_top
+        block_h = pill_h + 40 + text_h          # الشارة ثم النص
+
         if has_photo:
-            photo_space = avail - text_h - 40
-            if photo_space < 400:
+            space = bottom - top - block_h - 48
+            if space < 420:
                 raise RenderError("النص طويل ولا يترك مساحة كافية للصورة")
-            box_w = W - 2 * SIDE
-            photo = self.fit_crop(photo, box_w, photo_space)
-            ph = min(photo_space, int(photo.height * min(box_w / photo.width, photo_space / photo.height)))
-            slack = max(0, avail - text_h - 40 - ph)
-            text_top = content_top + slack // 2
-            self._paste_text(img, text_img, text_top, text_h, lay)
-            self.place_photo(img, photo, text_top + text_h + 40, text_top + text_h + 40 + ph, lay)
+            box_w = W - 2 * PHOTO_SIDE
+            scale = min(box_w / photo.width, space / photo.height)
+            ph = int(photo.height * scale)
+            slack = max(0, space - ph)
+            y = top + slack // 2                 # المجموعة كلها في منتصف المساحة
+            y = self.place_photo(img, photo, y, y + ph, lay) + 48
         else:
-            if text_h > avail:
-                raise RenderError("النص أطول من المساحة المتاحة")
-            text_top = content_top + (avail - text_h) // 2
-            # إطار أنيق حول النص في القالب النصي
-            ImageDraw.Draw(img).rectangle((SIDE + 6, text_top - 50, SIDE + 14, text_top + text_h + 30), fill=RED)
-            ImageDraw.Draw(img).rectangle((W - SIDE - 14, text_top - 50, W - SIDE - 6, text_top + text_h + 30), fill=RED)
-            self._paste_text(img, text_img, text_top, text_h, lay)
+            y = top + max(0, bottom - top - block_h) // 2
+        y = self.pill(d, y, snap, lay) + 40
+        self._paste_text(img, text_img, y, text_h, lay)
 
         self.footer(img, lay)
         return img, lay
+
+    def pill(self, d, y: int, snap: Snap, lay: Layout) -> int:
+        """شارة القالب في المنتصف، وبجانبها شارات تحديث / غير رسمي"""
+        t = snap.template
+        label = TEMPLATE_AR.get(t, "")
+        fill, color = {"breaking": (RED, WHITE), "stats": (YELLOW, BLACK),
+                       "statement": (BLACK, WHITE), "transfer": (BLACK, WHITE)}.get(t, (RED, WHITE))
+        size, h = 54, 92
+        icon = self.emoji_img("1f6a8", 64) if t == "breaking" else None
+        if t == "breaking" and icon is None:
+            icon = self.siren_img(64)
+        tw = self.width(label, size) + (64 + 22 if icon else 0)
+        extra = [("تحديث", RED, WHITE)] if snap.is_update else []
+        if snap.is_rumor:
+            extra.append(("غير رسمي", WHITE, BLACK))
+        ew = [self.width(e[0], 40) + 52 for e in extra]
+        total = tw + 96 + sum(w + 18 for w in ew)
+        x = W / 2 + total / 2                   # من اليمين: الشارة الرئيسية ثم الإضافية
+        box = (int(x - tw - 96), y, int(x), y + h)
+        d.rounded_rectangle(box, 26, fill=fill)
+        cx = x - 48
+        if icon:
+            self._canvas.paste(icon, (int(cx - 64), y + (h - 64) // 2), icon)
+            cx -= 64 + 22
+        d.text((cx, y + h / 2 + 2), label, font=self.font(size), fill=color, anchor="rm",
+               direction="rtl", language="ar")
+        lay.add("chip:" + label, box)
+        lay.texts.append(label)
+        x = box[0] - 18
+        for (text, bg, fg), w in zip(extra, ew):
+            b = (int(x - w), y + 14, int(x), y + h - 14)
+            if bg == WHITE:
+                d.rounded_rectangle(b, 22, fill=WHITE, outline=BLACK, width=3)
+            else:
+                d.rounded_rectangle(b, 22, fill=bg)
+            d.text(((b[0] + b[2]) / 2, y + h / 2 + 2), text, font=self.font(40), fill=fg, anchor="mm",
+                   direction="rtl", language="ar")
+            lay.add("chip:" + text, b)
+            lay.texts.append(text)
+            x = b[0] - 18
+        return y + h
 
     def _text_layer(self, snap: Snap, k: float, drop_body: bool, max_w: int, lay: Layout, compact=False):
         text_img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -485,7 +426,7 @@ class Renderer:
             if s.body:
                 b.append(("text:body", s.body, 58 * k, 40, 3, RED, 12))
         else:  # breaking / general
-            b.append(("text:headline", s.headline, 80 * k, 52, 3, RED, 0))
+            b.append(("text:headline", s.headline, 80 * k, 52, 3, RED if s.template == "breaking" else BLACK, 0))
             if s.body:
                 b.append(("text:body", s.body, 54 * k, 36, 6, BLACK, 16))
         return b

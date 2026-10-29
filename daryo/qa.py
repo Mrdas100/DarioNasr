@@ -97,7 +97,8 @@ def check_render(img: Image.Image, lay: Layout, snap: Snap) -> list[str]:
     content = [(n, b) for n, b in lay.boxes if n not in ("footer",)]
     for name, b in content:
         if name.startswith("text:") or name.startswith("chip:") or name in ("photo", "logo"):
-            if b[0] < SIDE - 12 or b[2] > W - SIDE + 12:
+            margin = 40 if name == "photo" else SIDE - 12   # الصورة أعرض قليلًا من النص
+            if b[0] < margin or b[2] > W - margin:
                 problems.append(f"{name} خارج الهامش الجانبي الآمن")
             if b[1] < SAFE_TOP - 2:
                 problems.append(f"{name} داخل منطقة واجهة سناب العلوية")

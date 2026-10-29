@@ -18,7 +18,7 @@ from .editor import Editor, EditorError, to_snap
 from .filters import reject_reason
 from .models import SourcePost
 from .qa import QAError, check_image_file, check_render, check_snap_text, strip_unsupported, verify_font
-from .render import RenderError, Renderer, save_png
+from .render import PHOTO_RADIUS, RenderError, Renderer, save_png
 from .schedule import in_hours, parse_hours
 from .sources import BotSource, SourceError, WebSource, make_source
 from .telegram_bot import Bot
@@ -377,7 +377,7 @@ class Service:
             if vid is not None:
                 box = next((b for n, b in lay.boxes if n == "photo"), None)
                 try:
-                    out = await asyncio.to_thread(compose, path, vid, box, path.with_suffix(".mp4"))
+                    out = await asyncio.to_thread(compose, path, vid, box, path.with_suffix(".mp4"), PHOTO_RADIUS)
                 except VideoError as e:
                     log.warning("تعذر تركيب فيديو %s: %s", msg_id, e)
                     self.alert(f"تعذر تجهيز سنابة الفيديو فأُرسلت صورة\n{p.url}")
