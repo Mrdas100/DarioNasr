@@ -29,6 +29,7 @@ CARD_X0, CARD_X1 = 84, W - 84
 CARD_W = CARD_X1 - CARD_X0
 CARD_R = 30
 TEXT_BOTTOM = FOOTER_TOP - 20
+MAX_UPSCALE = 2.1           # أكثر من هذا تظهر الصورة مشوشة
 
 
 class Designer(Renderer):
@@ -178,7 +179,7 @@ class Designer(Renderer):
         max_w = CARD_W - 110
         colors = (INK, BLUE, MUTED)
         room = TEXT_BOTTOM - (SAFE_TOP + 70)
-        natural = int(photo.height * CARD_W / photo.width)
+        natural = int(photo.height * min(CARD_W / photo.width, MAX_UPSCALE))
         # النص أولًا بحد أقصى يترك للصورة 620 على الأقل
         blocks, th = self._fit_blocks(snap, max(220, room - min(natural, 620) - 150), max_w, colors, lay)
         panel_h = max(300, th + 150)
@@ -190,7 +191,7 @@ class Designer(Renderer):
         if top + total > TEXT_BOTTOM + 4:
             raise RenderError("النص طويل ولا يترك مساحة كافية للصورة")
         # الصورة كاملة: بعرض البطاقة، وإن كانت أطول من المساحة تُصغّر وتملأ الجوانب نسخة مموهة منها
-        scale = min(CARD_W / photo.width, ph / photo.height)
+        scale = min(CARD_W / photo.width, ph / photo.height, MAX_UPSCALE)
         pw, phh = int(photo.width * scale), int(photo.height * scale)
         resized = ImageOps.fit(photo, (CARD_W // 6, max(1, ph // 6))).filter(ImageFilter.GaussianBlur(5))
         resized = Image.blend(resized.resize((CARD_W, ph)), Image.new("RGB", (CARD_W, ph), NAVY), 0.45)
@@ -265,12 +266,9 @@ class Designer(Renderer):
     # بوستر: صورة طولية أو فيديو
     def _render_poster(self, snap, photo, lay):
         img = Image.new("RGB", (W, H), NAVY)
-        scale = W / photo.width
-        ph = int(photo.height * scale)
-        if ph > H:      # أطول من التصميم: كاملة بالارتفاع مع خلفية مموهة
-            scale = H / photo.height
-            ph = H
-        pw = int(photo.width * scale)
+        # بعرض التصميم كاملًا، إلا إن كانت أطول منه أو صغيرة الدقة فتُعرض كاملة على خلفية مموهة منها
+        scale = min(W / photo.width, H / photo.height, MAX_UPSCALE)
+        ph, pw = int(photo.height * scale), int(photo.width * scale)
         bg = ImageOps.fit(photo, (W // 6, H // 6)).filter(ImageFilter.GaussianBlur(6)).resize((W, H))
         img.paste(Image.blend(bg, Image.new("RGB", (W, H), NAVY), 0.55))
         img.paste(photo.resize((pw, ph), Image.LANCZOS), ((W - pw) // 2, 0))
