@@ -23,6 +23,11 @@ OFFICIAL_SIGNS = ["رسميا", "رسمي", "يعلن", "اعلن", "أعلن", 
 TRANSFER_SIGNS = ["انتقال", "صفقه", "صفقة", "توقيع", "يوقع", "عقد", "تجديد", "اعاره", "إعارة", "التعاقد",
                   "الميركاتو", "يرحل", "رحيل", "فسخ", "الانضمام", "ينضم", "مفاوضات", "شرط جزائي"]
 STATEMENT_SIGNS = ["قال", "صرح", "تصريح", "يقول", "اكد", "أكد", "مؤتمر", "حديث", "في حديثه", ":", "«", '"']
+# ما يدل على أن للمنشور مصدرًا (صحيفة، حساب، بيان، تصريح). بدونه يُصنف المنشور "تعليق" لا "خبر"
+SOURCE_SIGNS = OFFICIAL_SIGNS + ["عبر", "مصدر", "مصادر", "صحيفه", "صحيفة", "حسب", "وفق", "وفقا", "نقلا", "تقارير",
+                                 "تقرير", "موقع", "حساب", "الصحفي", "الاعلامي", "الإعلامي", "قال", "صرح", "تصريح",
+                                 "مؤتمر", "في حديثه", "كشف", "افاد", "أفاد", "ذكرت", "ذكر", "اكدت", "أكدت", "عاجل",
+                                 "خاص", "رسميًا", "(ig)", "@"]
 BREAKING_SIGNS = ["عاجل", "🚨", "‼", "الان", "الآن"]
 STATS_SIGNS = ["ارقام", "أرقام", "احصائ", "إحصائ", "هدف", "اهداف", "أهداف", "مباراه", "مباراة", "%", "رقم",
                "صناعه", "صناعة", "سجل", "تمريره", "تمريرة", "دقيقه", "دقيقة"]
@@ -52,7 +57,7 @@ SYSTEM_PROMPT = """أنت محرر أخبار رياضية سعودي لحساب
 class EditResult(BaseModel):
     publishable: bool
     skip_reason: str = ""
-    template: Literal["breaking", "statement", "stats", "transfer", "general"]
+    template: Literal["breaking", "statement", "stats", "transfer", "general", "comment"]
     headline: str
     body: str = ""
     kicker: str = Field("", description="كلمة أو كلمتان مثل الآن أو رسميًا، أو فارغ")
@@ -84,6 +89,18 @@ def _has_any(norm: str, signs) -> bool:
         elif n in norm:
             return True
     return False
+
+
+def has_source(raw: str) -> bool:
+    norm = normalize_ar(raw)
+    return "@" in raw or "(IG)" in raw.upper() or _has_any(norm, SOURCE_SIGNS)
+
+
+def as_comment(res: "EditResult", raw: str) -> "EditResult":
+    """منشور عام بلا مصدر يُعرض «تعليق» بدل «خبر»"""
+    if res.template == "general" and not has_source(raw):
+        return res.model_copy(update={"template": "comment"})
+    return res
 
 
 def classify(raw: str) -> str:
@@ -245,7 +262,7 @@ class Editor:
                 res = self._llm(raw, history_cands)
                 problems = validate(res, raw)
                 if not problems:
-                    return res, "llm"
+                    return as_comment(res, raw), "llm"
                 log.warning("مخرجات النموذج رُفضت: %s", problems)
             except Exception as e:
                 log.warning("فشل نموذج اللغة، سيستخدم المحرر المحلي: %s", e)
@@ -253,7 +270,7 @@ class Editor:
         problems = validate(res, raw)
         if problems:
             raise EditorError("؛ ".join(problems))
-        return res, "rules"
+        return as_comment(res, raw), "rules"
 
     def _llm(self, raw: str, cands: list) -> EditResult:
         import anthropic

@@ -277,10 +277,6 @@ class Designer(Renderer):
         ph, pw = int(photo.height * scale), int(photo.width * scale)
         bg = ImageOps.fit(photo, (W // 6, H // 6)).filter(ImageFilter.GaussianBlur(6)).resize((W, H))
         img.paste(Image.blend(bg, Image.new("RGB", (W, H), NAVY), 0.55))
-        img.paste(photo.resize((pw, ph), Image.LANCZOS), ((W - pw) // 2, 0))
-        lay.add("photo", ((W - pw) // 2, 0, (W - pw) // 2 + pw, ph))
-        lay.image_used, lay.image_scale, lay.photo_radius = True, scale, 0
-        lay.text_on_photo = True
         over = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         max_w = W - 200
         colors = (WHITE, YELLOW, (218, 224, 240))
@@ -288,6 +284,14 @@ class Designer(Renderer):
         label_h = 130
         text_top = TEXT_BOTTOM - th - 10
         label_top = text_top - label_h - 10
+        # الصورة/الفيديو في الوسط: وسط المساحة فوق النص إن اتسعت لها، وإلا وسط التصميم
+        free = label_top - 30
+        px = (W - pw) // 2
+        py = (free - ph) // 2 if ph <= free else max(0, (H - ph) // 2)
+        img.paste(photo.resize((pw, ph), Image.LANCZOS), (px, py))
+        lay.add("photo", (px, py, px + pw, py + ph))
+        lay.image_used, lay.image_scale, lay.photo_radius = True, scale, 0
+        lay.text_on_photo = True
         # تدرج كحلي يبدأ فوق العنوان بمسافة ويغطي الأسفل
         g0 = max(0, label_top - 420)
         grad = Image.new("RGBA", (W, H - g0), NAVY + (0,))
@@ -296,7 +300,7 @@ class Designer(Renderer):
         over.alpha_composite(grad, (0, g0))
         d = ImageDraw.Draw(over)
         # التصنيف بخط كبير مع شريط تحته
-        label = {"general": "خبر"}.get(snap.template, self._label(snap)) + ":"
+        label = {"general": "خبر", "comment": "تعليق"}.get(snap.template, self._label(snap)) + ":"
         self.font_path = self.bold_path
         lw = self.width(label, 92)
         xr = W - 92

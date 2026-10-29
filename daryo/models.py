@@ -10,6 +10,7 @@ TEMPLATE_AR = {
     "stats": "بالأرقام",
     "transfer": "سوق الانتقالات",
     "general": "أخبار النصر",
+    "comment": "تعليق",
 }
 
 

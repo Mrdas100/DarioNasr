@@ -264,3 +264,28 @@ def test_keycap_emoji_split():
     from daryo.emoji import names, runs
     assert runs("حضوره، 9️⃣💛7️⃣")[1:] == [(True, "9️⃣"), (True, "💛"), (True, "7️⃣")]
     assert names("9️⃣")[0] == "0039-fe0f-20e3"
+
+
+def test_unsourced_post_is_comment():
+    from daryo.editor import Editor, rule_based, as_comment
+    raw = "جمهور النصر يستحق فريق ينافس على كل البطولات هذا الموسم"
+    assert as_comment(rule_based(raw), raw).template == "comment"
+    sourced = "حسب صحيفة الرياضية: النصر يجهز لمعسكر خارجي في الشتاء"
+    assert as_comment(rule_based(sourced), sourced).template != "comment"
+
+
+def test_poster_media_centered():
+    from PIL import Image
+    from daryo.config import Config
+    from daryo.design import Designer, H
+    from daryo.editor import rule_based, to_snap
+    from daryo.qa import check_render
+    c = Config()
+    d = Designer(c.font_path, c.logo_path, c.snap_handle, c.account_name)
+    snap = to_snap(rule_based("جمهور النصر يستحق فريق ينافس على كل البطولات هذا الموسم"), PHOTO, "u", False, lambda s: s)
+    snap.template = "comment"
+    lay = __import__("daryo.render", fromlist=["Layout"]).Layout()
+    photo = Image.new("RGB", (1280, 720), (90, 90, 90))
+    img, over = d._render_poster(snap, photo, lay)
+    x0, y0, x1, y1 = [b for n, b in lay.boxes if n == "photo"][0]
+    assert y0 > 150 and "تعليق:" in lay.texts
