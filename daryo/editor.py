@@ -160,6 +160,8 @@ def rule_based(raw: str) -> EditResult:
             continue
         kept.append(line)  # الوسوم داخل الجملة تبقى كلمات (#النصر_الخلود ← النصر الخلود)
     text = SOURCE_SIGNATURES.sub(" ", strip_decor("\n".join(kept), keep_emoji=True))
+    # علامات التنصيص المستقيمة تنكسر في الاتجاه العربي وتُقطع عند تقسيم العنوان
+    text = re.sub(r'\s*"\s*', " ", text).replace(" \n", "\n")
     # وسوم بداية الخبر مثل "عاجل — رسمياً:" قد تتكرر
     label = r"^\s*(عاجل|خاص|رسمي[اًً]*|مصادر|مصدر|تقارير)\s*[:\-|—–]+\s*"
     while re.match(label, text):
