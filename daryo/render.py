@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps, features
 
-from .emoji import CLUSTER, EmojiStore, runs
+from .emoji import _STRAY, CLUSTER, EmojiStore, runs
 from .models import TEMPLATE_AR, Snap
 
 W, H = 1080, 1920
@@ -103,8 +103,10 @@ class Renderer:
             if is_e:
                 if self.emoji.get(t) is not None:
                     out.append((True, t))
-            elif t.strip():
-                out.append((False, t.strip()))
+            else:
+                t = _STRAY.sub("", t).strip()   # بقايا إيموجي بلا صورة لا تُرسم مربعات
+                if t:
+                    out.append((False, t))
         return out
 
     def _draw_line(self, d, x_right: float, y: int, line: str, size: int, color) -> None:

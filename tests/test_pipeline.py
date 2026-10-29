@@ -258,3 +258,9 @@ def test_inline_emoji_rendered(tmp_path):
     check_snap_text(snap, c.font_path)
     img, lay = rd.render(snap)
     assert check_render(img, lay, snap) == []
+
+
+def test_keycap_emoji_split():
+    from daryo.emoji import names, runs
+    assert runs("حضوره، 9️⃣💛7️⃣")[1:] == [(True, "9️⃣"), (True, "💛"), (True, "7️⃣")]
+    assert names("9️⃣")[0] == "0039-fe0f-20e3"

@@ -18,7 +18,8 @@ log = logging.getLogger("daryo.emoji")
 _BASE = ("\U0001F000-\U0001F1E5\U0001F200-\U0001FAFF☀-➿⬀-⯿⌀-⏿"
          "←-⇿■-◿‼⁉™ℹ〰〽")
 _MOD = "(?:️|[\U0001F3FB-\U0001F3FF])*"
-CLUSTER = re.compile(f"(?:[\U0001F1E6-\U0001F1FF]{{2}}|[{_BASE}]{_MOD}(?:‍[{_BASE}]{_MOD})*)")
+# أرقام الإيموجي مثل 9️⃣ (رقم + FE0F + 20E3) ثم الأعلام ثم بقية الإيموجي
+CLUSTER = re.compile(f"(?:[0-9#*]\uFE0F?\u20E3|[\U0001F1E6-\U0001F1FF]{{2}}|[{_BASE}]{_MOD}(?:\u200D[{_BASE}]{_MOD})*)")
 _STRAY = re.compile("[️‍\U0001F3FB-\U0001F3FF\U0001F1E6-\U0001F1FF⃣]")
 
 SOURCES = ["https://cdn.jsdelivr.net/npm/emoji-datasource-apple@15.1.2/img/apple/64/{}.png",
@@ -44,12 +45,14 @@ def runs(text: str) -> list[tuple[bool, str]]:
 
 
 def names(cluster: str) -> list[str]:
-    cps = [f"{ord(c):x}" for c in cluster]
+    cps = [f"{ord(c):04x}" for c in cluster]
     full = "-".join(cps)
     bare = "-".join(c for c in cps if c != "fe0f")
     cands = [full, bare]
     if len(cps) == 1:
         cands.append(f"{cps[0]}-fe0f")
+    if cps[-1] == "20e3" and "fe0f" not in cps:
+        cands.insert(0, f"{cps[0]}-fe0f-20e3")
     return list(dict.fromkeys(cands))
 
 
