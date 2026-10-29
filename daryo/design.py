@@ -163,8 +163,14 @@ class Designer(Renderer):
         elif photo.height / photo.width >= 1.12:
             img, over = self._render_poster(snap, photo, lay)
         else:
-            img, over = self._render_card(snap, photo, lay)
-        self._footer(over, lay, dark=photo is None or photo.height / photo.width >= 1.12)
+            try:
+                img, over = self._render_card(snap, photo, lay)
+            except RenderError:
+                # نص طويل مع صورة عريضة: قالب البوستر يتسع للنص فوق الصورة
+                lay = Layout()
+                lay.fonts.add(self.bold_path)
+                img, over = self._render_poster(snap, photo, lay)
+        self._footer(over, lay, dark=photo is None or lay.text_on_photo)
         lay.overlay, lay.base = over, img
         final = img.convert("RGBA")
         final.alpha_composite(over)
