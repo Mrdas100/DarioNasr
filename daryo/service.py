@@ -18,7 +18,8 @@ from .editor import Editor, EditorError, to_snap
 from .filters import reject_reason
 from .models import SourcePost
 from .qa import QAError, check_image_file, check_render, check_snap_text, strip_unsupported, verify_font
-from .render import PHOTO_RADIUS, RenderError, Renderer, save_png
+from .design import Designer
+from .render import RenderError, Renderer, save_png
 from .schedule import in_hours, parse_hours
 from .sources import BotSource, SourceError, WebSource, make_source
 from .telegram_bot import Bot
@@ -59,8 +60,12 @@ class Service:
                 raise SystemExit("وضع SOURCE_MODE=bot يحتاج BOT_TOKEN و OWNER_CHAT_ID")
             self.source.attach(self.bot)
         self.editor = Editor(cfg)
-        self.renderer = Renderer(cfg.font_path, cfg.logo_path, cfg.snap_handle, cfg.account_name,
-                                 emoji=EmojiStore(cfg.data_dir / "emoji"), style=cfg.design_style)
+        emoji = EmojiStore(cfg.data_dir / "emoji")
+        if cfg.design_style in ("clean", "cinema", "brand"):
+            self.renderer = Renderer(cfg.font_path, cfg.logo_path, cfg.snap_handle, cfg.account_name,
+                                     emoji=emoji, style=cfg.design_style)
+        else:   # القالب المعتمد: بطاقة / بوستر بألوان النصر
+            self.renderer = Designer(cfg.font_path, cfg.logo_path, cfg.snap_handle, cfg.account_name, emoji=emoji)
         self.wake = asyncio.Event()
         self.loop: asyncio.AbstractEventLoop | None = None
         self.fail_count = 0
@@ -377,7 +382,7 @@ class Service:
             if vid is not None:
                 box = next((b for n, b in lay.boxes if n == "photo"), None)
                 try:
-                    out = await asyncio.to_thread(compose, path, vid, box, path.with_suffix(".mp4"), PHOTO_RADIUS)
+                    out = await asyncio.to_thread(self._compose_video, path, vid, box, lay)
                 except VideoError as e:
                     log.warning("تعذر تركيب فيديو %s: %s", msg_id, e)
                     self.alert(f"تعذر تجهيز سنابة الفيديو فأُرسلت صورة\n{p.url}")
@@ -408,6 +413,20 @@ class Service:
         except Exception as e:
             log.warning("تعذر جلب الفيديو من صفحة المعاينة: %s", e)
         return []
+
+    @staticmethod
+    def _compose_video(path: Path, vid: Path, box, lay) -> Path:
+        """الفيديو بين طبقتين: خلفية التصميم تحته، والشعار والنص فوقه"""
+        if lay.base is not None and lay.overlay is not None:
+            base, over = path.with_suffix(".base.png"), path.with_suffix(".over.png")
+            lay.base.save(base)
+            lay.overlay.save(over)
+            try:
+                return compose(base, vid, box, path.with_suffix(".mp4"), lay.photo_radius, overlay=over)
+            finally:
+                base.unlink(missing_ok=True)
+                over.unlink(missing_ok=True)
+        return compose(path, vid, box, path.with_suffix(".mp4"), lay.photo_radius)
 
     def _design(self, snap, msg_id: int, idx: int) -> Path:
         check_snap_text(snap, self.cfg.font_path)

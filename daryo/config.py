@@ -59,14 +59,14 @@ class Config:
     initial_backfill: int = field(default_factory=lambda: int(_env("INITIAL_BACKFILL", "0")))
     # first = سنابة واحدة للألبوم بأول صورة | each = سنابة لكل صورة
     album_mode: str = field(default_factory=lambda: _env("ALBUM_MODE", "first"))
-    design_style: str = field(default_factory=lambda: _env("DESIGN_STYLE", "clean"))   # clean | cinema | brand
+    design_style: str = field(default_factory=lambda: _env("DESIGN_STYLE", "nassr"))   # nassr (بطاقة/بوستر) | clean | cinema | brand
     use_source_images: bool = field(default_factory=lambda: _bool("USE_SOURCE_IMAGES", True))
     dedup_window_hours: int = field(default_factory=lambda: int(_env("DEDUP_WINDOW_HOURS", "72")))
     alert_after_failures: int = field(default_factory=lambda: int(_env("ALERT_AFTER_FAILURES", "3")))
 
     # المسارات
     data_dir: Path = field(default_factory=lambda: Path(_env("DATA_DIR", str(ROOT / "data"))))
-    font_path: Path = field(default_factory=lambda: Path(_env("FONT_PATH", str(ROOT / "assets" / "fonts" / "arial-bold.ttf"))))
+    font_path: Path = field(default_factory=lambda: Path(_env("FONT_PATH", str(ROOT / "assets" / "fonts" / "IBMPlexSansArabic-Bold.ttf"))))
     logo_path: Path = field(default_factory=lambda: Path(_env("LOGO_PATH", str(ROOT / "assets" / "logo.png"))))
 
     @property
@@ -95,4 +95,10 @@ class Config:
 
 
 # بصمة ملف Arial Bold المعتمد. أي ملف آخر يُرفض ولا يُصمم به
-APPROVED_FONT_SHA256 = "0d5d1482307b800ec9c49f77cb6648666f88bcf2d0ce957f52af4e0fc3c6fcf8"
+APPROVED_FONT_SHA256 = "0d5d1482307b800ec9c49f77cb6648666f88bcf2d0ce957f52af4e0fc3c6fcf8"   # Arial Bold
+# IBM Plex Sans Arabic (OFL) اعتمده صاحب الحساب في 2026-10-29 ليطابق نماذج التصميم الجديدة
+APPROVED_FONTS = {
+    APPROVED_FONT_SHA256,
+    "691e0c891a38637ae6bbdb69700f8042cb0724a137bee615068ffdb92244f61f",   # IBMPlexSansArabic-Bold
+    "597bd5502e5997be4414e4c9c88834b30ff3784250c84f20bce2b20e53ebd467",   # IBMPlexSansArabic-SemiBold
+}

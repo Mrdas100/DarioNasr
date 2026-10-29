@@ -50,6 +50,9 @@ class Layout:
     texts: list[str] = field(default_factory=list)
     image_used: bool = False
     photo_radius: int = 32
+    overlay: object = None      # طبقة ما فوق الصورة (للفيديو)
+    text_on_photo: bool = False
+    base: object = None         # التصميم تحت الصورة (للفيديو)
     image_scale: float = 0.0
     fonts: set[str] = field(default_factory=set)
 
@@ -69,13 +72,14 @@ class Renderer:
         self.logo_path = logo_path if logo_path and Path(logo_path).exists() else None
         self.handle = handle
         self.account_name = account_name
-        self._cache: dict[int, ImageFont.FreeTypeFont] = {}
+        self._cache: dict[tuple[str, int], ImageFont.FreeTypeFont] = {}
 
     # ---------- أدوات الخط ----------
     def font(self, size: int) -> ImageFont.FreeTypeFont:
-        if size not in self._cache:
-            self._cache[size] = ImageFont.truetype(self.font_path, size, layout_engine=ImageFont.Layout.RAQM)
-        return self._cache[size]
+        key = (self.font_path, size)
+        if key not in self._cache:
+            self._cache[key] = ImageFont.truetype(self.font_path, size, layout_engine=ImageFont.Layout.RAQM)
+        return self._cache[key]
 
     def width(self, text: str, size: int) -> float:
         parts = self._runs(text)

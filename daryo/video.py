@@ -33,8 +33,10 @@ def duration(video: Path) -> float:
         raise VideoError("تعذر قراءة مدة الفيديو الأصلي")
 
 
-def compose(png: Path, video: Path, box: tuple[int, int, int, int], out: Path, radius: int = 26) -> Path:
-    """يركّب الفيديو داخل مربع الصورة في التصميم مع الصوت الأصلي"""
+def compose(png: Path, video: Path, box: tuple[int, int, int, int], out: Path, radius: int = 26,
+            overlay: Path | None = None) -> Path:
+    """يركّب الفيديو داخل مربع الصورة في التصميم مع الصوت الأصلي.
+    overlay: طبقة شفافة (الشعار والتدرج والنص) تُوضع فوق الفيديو"""
     x0, y0, x1, y1 = box
     # مدة السنابة = مدة الفيديو الأصلي بالضبط (الصورة الخلفية والقناع يتكرران بلا نهاية)
     secs = min(duration(video), MAX_SEC)
@@ -45,9 +47,14 @@ def compose(png: Path, video: Path, box: tuple[int, int, int, int], out: Path, r
     m.save(mask)
     flt = (f"[1:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1,format=rgba[v];"
            f"[2:v]format=gray,scale={w}:{h}[m];[v][m]alphamerge[vm];"
-           f"[0:v][vm]overlay={x0}:{y0}:shortest=1,format=yuv420p[out]")
-    cmd = ["ffmpeg", "-y", "-loglevel", "error",
-           "-loop", "1", "-i", str(png), "-i", str(video), "-loop", "1", "-i", str(mask),
+           f"[0:v][vm]overlay={x0}:{y0}:shortest=1")
+    inputs = ["-loop", "1", "-i", str(png), "-i", str(video), "-loop", "1", "-i", str(mask)]
+    if overlay is not None:
+        flt += "[bv];[3:v]format=rgba[ov];[bv][ov]overlay=0:0,format=yuv420p[out]"
+        inputs += ["-loop", "1", "-i", str(overlay)]
+    else:
+        flt += ",format=yuv420p[out]"
+    cmd = ["ffmpeg", "-y", "-loglevel", "error", *inputs,
            "-filter_complex", flt, "-map", "[out]", "-map", "1:a?",
            "-t", f"{secs:.3f}", "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
            "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out)]
