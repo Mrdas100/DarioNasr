@@ -40,7 +40,10 @@ HELP = """أوامر نظام داريو النصر:
 /last آخر 10 منشورات وحالتها
 /latest 2 معالجة آخر منشورين لم يُرسلا
 /redo 2 إعادة تصميم آخر منشورين حتى لو أُرسلا
-/test إرسال سنابة تجريبية"""
+/test إرسال سنابة تجريبية
+/groups المجموعات التي تصلها التصاميم
+/ungroup إيقاف الإرسال لكل المجموعات
+لإرسال التصاميم لمجموعة: أضف البوت للمجموعة (أو اكتب /group داخلها)"""
 
 
 def text_hash(t: str) -> str:
@@ -90,12 +93,30 @@ class Service:
             except Exception as e:
                 log.error("تعذر إرسال رسالة: %s", e)
 
+    def set_group(self, chat_id: int, title: str, add: bool):
+        groups = [g for g in self.db.get("groups", []) if g[0] != chat_id]
+        if add:
+            groups.append([chat_id, title])
+        self.db.set("groups", groups)
+        self.bot.groups = [g for g, _ in groups]
+        log.info("المجموعات: %s", groups)
+        self.bot.send_text(f"✅ تصل التصاميم الآن لمجموعة «{title}»" if add else
+                           f"توقف إرسال التصاميم لمجموعة «{title}»")
+
     # ---------- الأوامر ----------
     def handle_command(self, text: str) -> str:
         cmd, _, arg = text.partition(" ")
         cmd = cmd.split("@")[0].lower()
         if cmd in ("/start", "/help"):
             return HELP
+        if cmd == "/groups":
+            groups = self.db.get("groups", [])
+            return "\n".join(f"• {t} ({g})" for g, t in groups) or "لا توجد مجموعات. أضف البوت لمجموعة لتصلها التصاميم"
+        if cmd == "/ungroup":
+            self.db.set("groups", [])
+            if self.bot:
+                self.bot.groups = []
+            return "توقف إرسال التصاميم لكل المجموعات"
         if cmd == "/on":
             self.db.set("enabled", True)
             self._wake()
@@ -167,6 +188,8 @@ class Service:
             else:
                 raise
         if self.bot:
+            self.bot.groups = [g for g, _ in self.db.get("groups", [])]
+            self.bot.group_handler = self.set_group
             ch = self.source.on_channel_post if self.source.name == "bot" else None
             self.bot.start_command_loop(self.handle_command, ch)
         log.info("🟢 بدأ نظام داريو النصر\n%s", self.status_text())   # بدون رسالة: المحادثة للتصاميم فقط

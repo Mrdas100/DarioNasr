@@ -21,6 +21,8 @@ class Bot:
             raise BotError("BOT_TOKEN و OWNER_CHAT_ID مطلوبان")
         self.base = f"https://api.telegram.org/bot{token}"
         self.owner = owner_chat_id
+        self.groups: list[int] = []      # مجموعات تصلها التصاميم أيضًا (يضيفها المالك)
+        self.group_handler = None
         self.s = requests.Session()
 
     def _call(self, method: str, timeout: int = 60, **kw):
@@ -44,22 +46,39 @@ class Bot:
         return self._call("sendMessage", data={"chat_id": chat_id or self.owner, "text": text[:4000],
                                                "disable_web_page_preview": True})
 
+    def _to_groups(self, send):
+        """نسخة لكل مجموعة؛ فشل مجموعة لا يوقف الإرسال للمالك"""
+        for g in list(self.groups):
+            try:
+                send(g)
+            except Exception as e:
+                log.warning("تعذر الإرسال للمجموعة %s: %s", g, e)
+                self.alert(f"تعذر إرسال التصميم للمجموعة {g}: {e}")
+
     def send_png(self, path: Path, caption: str = ""):
         """sendDocument يحافظ على الملف كما هو دون ضغط تيليجرام"""
-        data = {"chat_id": self.owner, "disable_content_type_detection": True}
-        if caption:
-            data["caption"] = caption[:1024]
-        with open(path, "rb") as f:
-            return self._call("sendDocument", timeout=120, data=data,
-                              files={"document": (Path(path).name, f, "image/png")})
+        def send(chat):
+            data = {"chat_id": chat, "disable_content_type_detection": True}
+            if caption:
+                data["caption"] = caption[:1024]
+            with open(path, "rb") as f:
+                return self._call("sendDocument", timeout=120, data=data,
+                                  files={"document": (Path(path).name, f, "image/png")})
+        res = send(self.owner)
+        self._to_groups(send)
+        return res
 
     def send_video(self, path: Path):
         """سنابة الفيديو جاهزة للحفظ مباشرة بدون أي نص"""
-        with open(path, "rb") as f:
-            return self._call("sendVideo", timeout=300,
-                              data={"chat_id": self.owner, "width": 1080, "height": 1920,
-                                    "supports_streaming": True},
-                              files={"video": (Path(path).name, f, "video/mp4")})
+        def send(chat):
+            with open(path, "rb") as f:
+                return self._call("sendVideo", timeout=300,
+                                  data={"chat_id": chat, "width": 1080, "height": 1920,
+                                        "supports_streaming": True},
+                                  files={"video": (Path(path).name, f, "video/mp4")})
+        res = send(self.owner)
+        self._to_groups(send)
+        return res
 
     def copy_originals(self, from_chat: str, msg_ids: list[int]):
         """ينسخ رسائل المصدر نفسها (الصور والفيديو الأصلية) إلى محادثتك بدون اسم القناة"""
@@ -98,6 +117,21 @@ class Bot:
         except Exception as e:  # لا نوقف الخدمة بسبب فشل التنبيه
             log.error("تعذر إرسال التنبيه: %s", e)
 
+    def _membership(self, mem):
+        """إضافة البوت لمجموعة من المالك = تفعيل إرسال التصاميم لها، وإخراجه = إيقافها"""
+        chat = mem.get("chat") or {}
+        if chat.get("type") not in ("group", "supergroup") or not self.group_handler:
+            return
+        status = (mem.get("new_chat_member") or {}).get("status")
+        by = (mem.get("from") or {}).get("id")
+        if status in ("member", "administrator"):
+            if by == self.owner:
+                self.group_handler(chat["id"], chat.get("title", ""), True)
+            else:
+                log.warning("أُضيف البوت لمجموعة من غير المالك: %s", chat.get("id"))
+        elif status in ("left", "kicked"):
+            self.group_handler(chat["id"], chat.get("title", ""), False)
+
     # ---------- استقبال الأوامر ----------
     def start_command_loop(self, handler, channel_handler=None):
         self.channel_handler = channel_handler
@@ -110,7 +144,7 @@ class Bot:
         while True:
             try:
                 params = {"timeout": 50,
-                          "allowed_updates": '["message","channel_post","edited_channel_post"]'}
+                          "allowed_updates": '["message","channel_post","edited_channel_post","my_chat_member"]'}
                 if offset:
                     params["offset"] = offset
                 r = self.s.get(f"{self.base}/getUpdates", params=params, timeout=65)
@@ -124,10 +158,20 @@ class Bot:
                             except Exception as e:
                                 log.warning("تعذر قراءة منشور القناة: %s", e)
                         continue
+                    mem = upd.get("my_chat_member")
+                    if mem is not None:
+                        self._membership(mem)
+                        continue
                     msg = upd.get("message") or {}
                     chat = (msg.get("chat") or {}).get("id")
                     text = (msg.get("text") or "").strip()
                     if not text.startswith("/"):
+                        continue
+                    sender = (msg.get("from") or {}).get("id")
+                    if (chat != self.owner and sender == self.owner and self.group_handler
+                            and text.split("@")[0].split()[0].lower() == "/group"):
+                        # بديل يدوي: المالك يكتب /group داخل المجموعة
+                        self.group_handler(chat, (msg.get("chat") or {}).get("title", ""), True)
                         continue
                     if chat != self.owner:
                         log.warning("أمر من محادثة غير مصرح بها: %s", chat)
