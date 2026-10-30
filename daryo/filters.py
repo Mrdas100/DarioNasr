@@ -8,10 +8,11 @@ from .textutil import normalize_ar, strip_decor
 
 AD_PATTERNS = [
     r"للاعلان", r"للإعلان", r"اعلان مدفوع", r"إعلان مدفوع", r"\bاعلان\b", r"\bإعلان\b",
-    r"واتساب", r"واتس اب", r"wa\.me", r"كود خصم", r"كود الخصم", r"خصم \d+", r"متجر",
+    r"واتساب", r"واتس اب", r"wa\.me", r"كود خصم", r"كود الخصم", r"خصم \d+", r"(?<!\w)(?:و?ال|و)?متجر",
     r"اشترك الان", r"اشترك الآن", r"سجل الان", r"سجّل الآن", r"رابط التسجيل",
-    r"مراهن", r"1xbet", r"melbet", r"كازينو", r"ربح مضمون", r"توصيات", r"تداول",
-    r"عروض", r"تخفيضات", r"احجز الان", r"احجز الآن", r"اطلب الان", r"اطلب الآن",
+    r"مراهن", r"1xbet", r"melbet", r"كازينو", r"ربح مضمون", r"(?<!\w)(?:و?ال|و)?توصيات", r"(?<!\w)(?:و?ال|و)?تداول",
+    # كلمات عامة: بأداة تعريف أو واو فقط حتى لا تطابق "معروضة" و"يتداول"
+    r"(?<!\w)(?:و?ال|و)?عروض", r"(?<!\w)(?:و?ال|و)?تخفيضات", r"احجز الان", r"احجز الآن", r"اطلب الان", r"اطلب الآن",
     r"قناتنا الثانية", r"تابعونا على", r"تابعوا حسابنا", r"رابط القناة",
 ]
 # منشورات تفاعلية لا تصلح خبرًا
@@ -24,8 +25,17 @@ _NON = re.compile("|".join(normalize_ar(p.replace("^", "")) for p in NON_NEWS))
 _OFF = re.compile("|".join(OFFENSIVE))
 
 
+def strip_ad_lines(raw: str) -> str:
+    """يحذف أسطر الإعلان الملحقة بالمنشور (رابط، واتساب...)"""
+    return "\n".join(x for x in raw.splitlines() if not _AD.search(x))
+
+
 def reject_reason(post: SourcePost) -> str | None:
+    from .editor import is_dhikr
     raw = post.text or ""
+    if is_dhikr(raw):
+        # الأذكار تُنشر بقالبها الخاص حتى لو ألحق بها سطر إعلان (يُحذف عند التحرير)
+        return None if len(strip_decor(strip_ad_lines(raw))) >= 8 else "لا يوجد نص كافٍ"
     clean = strip_decor(raw)
     norm = normalize_ar(raw)
     if _AD.search(raw):

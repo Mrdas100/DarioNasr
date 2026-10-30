@@ -11,6 +11,7 @@ TEMPLATE_AR = {
     "transfer": "سوق الانتقالات",
     "general": "أخبار النصر",
     "comment": "تعليق",
+    "dhikr": "ذكر",
 }
 
 

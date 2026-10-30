@@ -289,3 +289,14 @@ def test_poster_media_centered():
     img, over = d._render_poster(snap, photo, lay)
     x0, y0, x1, y1 = [b for n, b in lay.boxes if n == "photo"][0]
     assert y0 > 150 and "تعليق:" in lay.texts
+
+
+def test_dhikr_post_gets_own_template():
+    from daryo.editor import is_dhikr, dhikr_result
+    from daryo.filters import reject_reason
+    raw = "قال النبي صلى الله عليه وسلم\nاكثروا من الصلاة علي ليلة الجمعة ويوم الجمعة فإن صلاتكم معروضة علي\n#النصر"
+    assert is_dhikr(raw)
+    assert reject_reason(post(40, raw)) is None
+    r = dhikr_result(raw)
+    assert r.template == "dhikr" and "معروضة علي" in r.headline and "النصر" not in r.headline
+    assert not is_dhikr("رونالدو يسجل هدفين في مباراة النصر والخلود")

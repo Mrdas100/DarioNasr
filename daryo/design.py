@@ -19,6 +19,7 @@ BLUE = (24, 58, 150)          # أزرق النصر
 NAVY = (9, 22, 58)
 INK = (14, 24, 52)            # نص داكن على الأبيض
 YELLOW = (255, 204, 0)
+GOLD = (226, 188, 98)          # ذهبي هادئ لقالب الأذكار
 RED = (226, 32, 44)
 SLATE = (42, 52, 72)
 WHITE = (255, 255, 255)
@@ -101,6 +102,8 @@ class Designer(Renderer):
             b.append(("text:quote", s.quote or s.headline, 66 * k, 44, 4, main, 10, "bold"))
             if s.body and s.quote:
                 b.append(("text:body", s.body, 44 * k, 34, 3, muted, 14, "semi"))
+        elif s.template == "dhikr":
+            b.append(("text:headline", s.headline, 64 * k, 40, 10, main, 0, "bold"))
         elif s.template == "stats":
             if s.number:
                 b.append(("text:number", s.number, 170 * k, 110, 1, accent, 0, "bold"))
@@ -158,7 +161,10 @@ class Designer(Renderer):
         photo = self.load_photo(snap.image_path)
         lay = Layout()
         lay.fonts.add(self.bold_path)
-        if photo is None:
+        if snap.template == "dhikr":
+            img, over = self._render_dhikr(snap, lay)
+            photo = None
+        elif photo is None:
             img, over = self._render_text(snap, lay)
         elif photo.height / photo.width >= 1.12:
             img, over = self._render_poster(snap, photo, lay)
@@ -323,6 +329,59 @@ class Designer(Renderer):
         self._text(over, blocks, W - 100, text_top, max_w, "right", lay)
         self._logo_badge(over, W - 60, SAFE_TOP + 10, lay, size=(170, 180), round_all=True)
         return img, over
+
+    # الأذكار والأحاديث: كحلي هادئ بزخرفة ذهبية ونص في المنتصف
+    def _render_dhikr(self, snap, lay):
+        import math
+        img = Image.new("RGB", (W, H), NAVY)
+        glow = Image.radial_gradient("L").resize((W * 2, W * 2))
+        glow = glow.point(lambda v: int(max(0, 255 - v) * 0.55))
+        tint = Image.new("RGB", (W * 2, W * 2), (34, 64, 140))
+        img.paste(tint, (-W // 2, H // 2 - W), glow)
+        # نقش نجمة ثمانية خفيف
+        pat = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        pd = ImageDraw.Draw(pat)
+        step, r = 180, 46
+        for cy in range(-step // 2, H + step, step):
+            for cx in range(-step // 2 + (step // 2 if (cy // step) % 2 else 0), W + step, step):
+                for rot in (0, 45):
+                    pts = [(cx + r * math.cos(math.radians(a + rot)), cy + r * math.sin(math.radians(a + rot)))
+                           for a in range(0, 360, 90)]
+                    pd.polygon(pts, outline=GOLD + (34,), width=2)
+        img.paste(pat, (0, 0), pat)
+        over = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        d = ImageDraw.Draw(over)
+        # إطار ذهبي مزدوج
+        fx0, fy0, fx1, fy1 = 60, SAFE_TOP - 40, W - 60, FOOTER_TOP - 20
+        d.rounded_rectangle((fx0, fy0, fx1, fy1), 40, outline=GOLD + (255,), width=4)
+        d.rounded_rectangle((fx0 + 16, fy0 + 16, fx1 - 16, fy1 - 16), 30, outline=GOLD + (120,), width=2)
+        logo = self._logo_img(240, 170)
+        ly = fy0 + 50
+        if logo is not None:
+            over.paste(logo, ((W - logo.width) // 2, ly), logo)
+            lay.add("logo", ((W - logo.width) // 2, ly, (W + logo.width) // 2, ly + logo.height))
+            ly += logo.height
+        max_w = W - 300
+        blocks, th = self._fit_blocks(snap, 980, max_w, (WHITE, GOLD, LIGHT), lay,
+                                      tiers=(1.3, 1.2, 1.1, 1.0, 0.9, 0.8, 0.7))
+        label = "جمعة مباركة" if "جمعه" in snap.headline.replace("ة", "ه") else self._label(snap)
+        area_top, area_bot = ly + 40, fy1 - 60
+        top = area_top + max(0, (area_bot - area_top - th - 260) // 2)
+        lw = self.width(label, 58)
+        d.text((W / 2, top + 40), label, font=self.font(58), fill=GOLD, anchor="mm", direction="rtl", language="ar")
+        lay.add("chip:" + label, (int(W / 2 - lw / 2), top, int(W / 2 + lw / 2), top + 80))
+        lay.texts.append(label)
+        self._divider(d, top + 110)
+        self._text(over, blocks, W // 2, top + 160, max_w, "center", lay)
+        self._divider(d, top + 160 + th + 50)
+        return img, over
+
+    @staticmethod
+    def _divider(d, y):
+        cx = W // 2
+        d.line((cx - 200, y, cx - 30, y), fill=GOLD + (200,), width=3)
+        d.line((cx + 30, y, cx + 200, y), fill=GOLD + (200,), width=3)
+        d.polygon([(cx, y - 14), (cx + 14, y), (cx, y + 14), (cx - 14, y)], fill=GOLD + (255,))
 
     # بدون صورة
     def _render_text(self, snap, lay):

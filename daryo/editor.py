@@ -57,7 +57,7 @@ SYSTEM_PROMPT = """أنت محرر أخبار رياضية سعودي لحساب
 class EditResult(BaseModel):
     publishable: bool
     skip_reason: str = ""
-    template: Literal["breaking", "statement", "stats", "transfer", "general", "comment"]
+    template: Literal["breaking", "statement", "stats", "transfer", "general", "comment", "dhikr"]
     headline: str
     body: str = ""
     kicker: str = Field("", description="كلمة أو كلمتان مثل الآن أو رسميًا، أو فارغ")
@@ -89,6 +89,35 @@ def _has_any(norm: str, signs) -> bool:
         elif n in norm:
             return True
     return False
+
+
+# أذكار وأحاديث ومنشورات الجمعة: لها قالب خاص وتُنقل بنصها كما هو
+DHIKR_SIGNS = ["صلى الله عليه وسلم", "ﷺ", "اللهم", "سبحان الله", "استغفر الله", "أستغفر الله", "قال تعالى",
+               "قال الله تعالى", "لا إله إلا الله", "لا اله الا الله", "الصلاة على النبي", "الصلاة علي",
+               "سورة الكهف", "جمعة مباركة", "جمعه مباركه", "الحمد لله رب", "لا حول ولا قوة", "أذكار", "اذكار",
+               "قال رسول الله", "قال النبي"]
+
+
+def is_dhikr(raw: str) -> bool:
+    if "ﷺ" in raw:
+        return True
+    norm = normalize_ar(raw)
+    return any(normalize_ar(x) in norm for x in DHIKR_SIGNS if x != "ﷺ")
+
+
+def dhikr_result(raw: str) -> "EditResult":
+    """النص كما ورد بلا قص ولا صياغة (ما عدا تنظيف الزخرفة والوسوم)"""
+    from .filters import strip_ad_lines
+    lines = [x for x in strip_ad_lines(raw).splitlines() if not re.fullmatch(r"\W*(#\S+\s*)+", x.strip())]
+    lines = [x for x in (strip_decor(x, keep_emoji=True).strip() for x in lines) if x]
+    # "قال النبي ﷺ" في سطر مستقل يتبعه نص الحديث
+    lines = [x + ":" if x.startswith("قال") and i < len(lines) - 1 and not x.endswith(":") else x
+             for i, x in enumerate(lines)]
+    text = " ".join(lines).replace("ﷺ", "صلى الله عليه وسلم")
+    text = re.sub(r"#(\S+)", lambda m: m.group(1).replace("_", " "), text)
+    text = tidy_punct(clip_words(text, 70))
+    return EditResult(publishable=bool(text), skip_reason="" if text else "لا يوجد نص", template="dhikr",
+                      headline=text, is_rumor=False, telegram_caption=text)
 
 
 def has_source(raw: str) -> bool:
@@ -257,6 +286,8 @@ class Editor:
 
     def edit(self, raw: str, history_cands: list) -> tuple[EditResult, str]:
         """يعيد (النتيجة، الطريقة). يرفع EditorError عند الفشل الكامل"""
+        if is_dhikr(raw):
+            return dhikr_result(raw), "rules"
         if self.client:
             try:
                 res = self._llm(raw, history_cands)
