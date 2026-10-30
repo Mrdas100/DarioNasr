@@ -65,7 +65,7 @@ def check_image_file(path: str) -> None:
             im.verify()
         with Image.open(path) as im:
             im = im.convert("RGB")
-            if min(im.size) < 320:
+            if min(im.size) < 120:   # الصغيرة تُعرض بحجمها المعقول على خلفية مموهة منها
                 raise QAError(f"صورة المصدر صغيرة جدًا {im.size}")
             stat = ImageStat.Stat(im.resize((64, 64)))
             if max(stat.stddev) < 4:

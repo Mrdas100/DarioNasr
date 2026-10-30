@@ -349,6 +349,7 @@ class Service:
 
         # الصور الأصلية من المصدر
         photos: list[str] = []
+        rejected: list[str] = []
         media = self.cfg.use_source_images and p.media_refs and res.template != "dhikr"  # الأذكار بقالب نصي
         if media:
             downloaded = await (src or self.source).download(p, self.cfg.media_dir)
@@ -358,13 +359,15 @@ class Service:
                     photos.append(ph)
                 except QAError as e:
                     log.info("صورة %s مرفوضة: %s", msg_id, e)
+                    rejected.append(str(e))
         if media and p.has_video and not any(video_of(ph) for ph in photos) and not isinstance(src, WebSource):
             # فيديو أكبر من حد Bot API: نجلبه من صفحة المعاينة العامة للقناة
             photos = await self._web_video(p) or photos
         if media and not photos:
             # الخبر له صورة أو فيديو: لا نرسله بدونها
-            self.db.upsert_post(msg_id, status="failed", reason="تعذر تحميل صورة الخبر", **base)
-            self.alert(f"تعذر تحميل صورة الخبر فلم يُرسل. أعد المحاولة بالأمر /redo 1\n{p.url}")
+            why = rejected[0] if rejected else "تعذر تحميل صورة الخبر"
+            self.db.upsert_post(msg_id, status="failed", reason=why, **base)
+            self.alert(f"لم يُرسل الخبر: {why}. أعد المحاولة بالأمر /redo 1\n{p.url}")
             return
         # الصورة الأولى أساسية، وإن لم تصلح نجرب بقية صور الألبوم قبل القالب النصي
         if self.cfg.album_mode == "each" and photos:
