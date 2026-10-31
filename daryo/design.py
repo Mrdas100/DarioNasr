@@ -99,7 +99,7 @@ class Designer(Renderer):
         if s.template == "statement":
             if s.speaker:
                 b.append(("text:speaker", s.speaker, 52 * k, 38, 1, accent, 0, "bold"))
-            b.append(("text:quote", s.quote or s.headline, 66 * k, 44, 4, main, 10, "bold"))
+            b.append(("text:quote", s.quote or s.headline, 66 * k, 36, 10, main, 10, "bold"))
             if s.body and s.quote:
                 b.append(("text:body", s.body, 44 * k, 34, 3, muted, 14, "semi"))
         elif s.template == "dhikr":

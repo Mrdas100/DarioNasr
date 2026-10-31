@@ -314,3 +314,12 @@ def test_album_collage_keeps_whole_photos(tmp_path):
     px = out.resize((out.width // 8, out.height // 8)).getdata()
     white = sum(1 for p in px if min(p) > 240) / len(px)
     assert white < 0.05
+
+
+def test_statement_quote_never_cut():
+    from daryo.editor import rule_based, validate
+    raw = ("آنج بوتسيكوغلو للاعبين بعد نهاية مباراة الخلود :\n\nلا يمكن ان نقدم اشواط اولى مثل هذه ، نحن افضل من ذلك. "
+           "وعلينا ان نعود اقوى في المباراة القادمة امام جماهيرنا لان هذا الفريق يستحق الكثير ونحن نعرف ذلك جيدا")
+    r = rule_based(raw)
+    assert r.template == "statement" and r.quote.endswith("نعرف ذلك جيدا")
+    assert validate(r, raw) == []

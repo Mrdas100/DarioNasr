@@ -259,7 +259,7 @@ def rule_based(raw: str) -> EditResult:
         if m:
             words = tidy_punct(m.group(1)).split()
             speaker = " ".join(words[:_natural_cut(words)]) if len(words) > 10 else " ".join(words)
-            quote = tidy_punct(clip_words(m.group(2).strip(" \"«»"), 12))
+            quote = tidy_punct(clip_words(m.group(2).strip(" \"«»"), 70))   # التصريح كاملًا دائمًا
             headline, body = quote, ""
         else:
             template = "general"
@@ -343,7 +343,7 @@ def validate(res: EditResult, raw: str) -> list[str]:
         problems.append("خبر انتقال غير مؤكد وُصف بالرسمي")
     if not (res.headline or res.quote):
         problems.append("لا يوجد عنوان")
-    if len(res.headline.split()) > 14:
+    if len(res.headline.split()) > 14 and res.template not in ("statement", "dhikr"):
         problems.append("العنوان طويل")
     return problems
 
