@@ -300,3 +300,17 @@ def test_dhikr_post_gets_own_template():
     r = dhikr_result(raw)
     assert r.template == "dhikr" and "معروضة علي" in r.headline and "النصر" not in r.headline
     assert not is_dhikr("رونالدو يسجل هدفين في مباراة النصر والخلود")
+
+
+def test_album_collage_keeps_whole_photos(tmp_path):
+    from PIL import Image
+    from daryo.collage import make_collage, CW
+    a, b = tmp_path / "a.jpg", tmp_path / "b.jpg"
+    Image.new("RGB", (1080, 1350), "blue").save(a)
+    Image.new("RGB", (1280, 720), "red").save(b)
+    out = Image.open(make_collage([str(a), str(b), str(a)], tmp_path / "c.jpg"))
+    assert out.width == CW
+    # كل صورة كاملة: لا مساحات بيضاء كبيرة ولا قص (المساحة الملونة تساوي مجموع الصور تقريبًا)
+    px = out.resize((out.width // 8, out.height // 8)).getdata()
+    white = sum(1 for p in px if min(p) > 240) / len(px)
+    assert white < 0.05

@@ -191,7 +191,7 @@ class Designer(Renderer):
         max_w = CARD_W - 110
         colors = (INK, BLUE, MUTED)
         room = TEXT_BOTTOM - (SAFE_TOP + 70)
-        natural = int(photo.height * min(CARD_W / photo.width, MAX_UPSCALE))
+        natural = int(photo.height * min(CARD_W / photo.width, MAX_UPSCALE)) + tab_h
         # النص أولًا بحد أقصى يترك للصورة 620 على الأقل
         blocks, th = self._fit_blocks(snap, max(220, room - min(natural, 620) - 150), max_w, colors, lay)
         panel_h = max(300, th + 150)
@@ -203,11 +203,13 @@ class Designer(Renderer):
         if top + total > TEXT_BOTTOM + 4:
             raise RenderError("النص طويل ولا يترك مساحة كافية للصورة")
         # الصورة كاملة: بعرض البطاقة، وإن كانت أطول من المساحة تُصغّر وتملأ الجوانب نسخة مموهة منها
-        scale = min(CARD_W / photo.width, ph / photo.height, MAX_UPSCALE)
+        # تبويب التصنيف يجلس أسفل مساحة الصورة: الصورة فوقه فلا يغطي منها شيئًا
+        room_h = ph - tab_h
+        scale = min(CARD_W / photo.width, room_h / photo.height, MAX_UPSCALE)
         pw, phh = int(photo.width * scale), int(photo.height * scale)
         resized = ImageOps.fit(photo, (CARD_W // 6, max(1, ph // 6))).filter(ImageFilter.GaussianBlur(5))
         resized = Image.blend(resized.resize((CARD_W, ph)), Image.new("RGB", (CARD_W, ph), NAVY), 0.45)
-        resized.paste(photo.resize((pw, phh), Image.LANCZOS), ((CARD_W - pw) // 2, (ph - phh) // 2))
+        resized.paste(photo.resize((pw, phh), Image.LANCZOS), ((CARD_W - pw) // 2, (room_h - phh) // 2))
         shadow = Image.new("RGBA", (CARD_W + 80, total + 80), (0, 0, 0, 0))
         ImageDraw.Draw(shadow).rounded_rectangle((40, 52, CARD_W + 40, total + 40), CARD_R, fill=(10, 20, 50, 70))
         shadow = shadow.filter(ImageFilter.GaussianBlur(20))
@@ -215,7 +217,7 @@ class Designer(Renderer):
         mask = Image.new("L", (CARD_W, ph), 0)
         ImageDraw.Draw(mask).rounded_rectangle((0, 0, CARD_W - 1, ph + CARD_R), CARD_R, fill=255)
         img.paste(resized, (CARD_X0, top), mask)
-        px0, py0 = CARD_X0 + (CARD_W - pw) // 2, top + (ph - phh) // 2
+        px0, py0 = CARD_X0 + (CARD_W - pw) // 2, top + (room_h - phh) // 2
         lay.add("photo", (px0, py0, px0 + pw, py0 + phh))
         lay.image_used, lay.image_scale, lay.photo_radius = True, scale, CARD_R if pw >= CARD_W - 2 else 0
         d = ImageDraw.Draw(over)
@@ -279,8 +281,6 @@ class Designer(Renderer):
     def _render_poster(self, snap, photo, lay):
         img = Image.new("RGB", (W, H), NAVY)
         # بعرض التصميم كاملًا، إلا إن كانت أطول منه أو صغيرة الدقة فتُعرض كاملة على خلفية مموهة منها
-        scale = min(W / photo.width, H / photo.height, MAX_UPSCALE)
-        ph, pw = int(photo.height * scale), int(photo.width * scale)
         bg = ImageOps.fit(photo, (W // 6, H // 6)).filter(ImageFilter.GaussianBlur(6)).resize((W, H))
         img.paste(Image.blend(bg, Image.new("RGB", (W, H), NAVY), 0.55))
         over = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -290,16 +290,17 @@ class Designer(Renderer):
         label_h = 130
         text_top = TEXT_BOTTOM - th - 10
         label_top = text_top - label_h - 10
-        # الصورة/الفيديو في الوسط: وسط المساحة فوق النص إن اتسعت لها، وإلا وسط التصميم
+        # الصورة/الفيديو كاملة فوق النص (لا يغطيها شيء) وفي وسط تلك المساحة
         free = label_top - 30
-        px = (W - pw) // 2
-        py = (free - ph) // 2 if ph <= free else max(0, (H - ph) // 2)
+        scale = min(W / photo.width, free / photo.height, MAX_UPSCALE)
+        ph, pw = int(photo.height * scale), int(photo.width * scale)
+        px, py = (W - pw) // 2, max(0, (free - ph) // 2)
         img.paste(photo.resize((pw, ph), Image.LANCZOS), (px, py))
         lay.add("photo", (px, py, px + pw, py + ph))
         lay.image_used, lay.image_scale, lay.photo_radius = True, scale, 0
-        lay.text_on_photo = True
+        lay.text_on_photo = True   # خلفية داكنة: الفوتر بالأبيض
         # تدرج كحلي يبدأ فوق العنوان بمسافة ويغطي الأسفل
-        g0 = max(0, label_top - 420)
+        g0 = max(0, label_top - 420, py + ph - 10)
         grad = Image.new("RGBA", (W, H - g0), NAVY + (0,))
         alpha = Image.linear_gradient("L").resize((W, H - g0)).point(lambda v: min(255, int(v * 1.8)))
         grad.putalpha(alpha)
