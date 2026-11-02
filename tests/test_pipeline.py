@@ -323,3 +323,9 @@ def test_statement_quote_never_cut():
     r = rule_based(raw)
     assert r.template == "statement" and r.quote.endswith("نعرف ذلك جيدا")
     assert validate(r, raw) == []
+
+
+def test_html_entities_unescaped():
+    from daryo.textutil import unescape_html
+    assert unescape_html("خروج جواو فيلكس &amp;amp;amp; نواف بوشل") == "خروج جواو فيلكس & نواف بوشل"
+    assert unescape_html("A &lt;b&gt;") == "A <b>"

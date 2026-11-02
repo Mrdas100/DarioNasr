@@ -174,11 +174,12 @@ class WebSource:
     async def stop(self):
         pass
 
-    async def fetch_latest(self, limit: int = 40) -> list[SourcePost]:
-        return await asyncio.to_thread(self._fetch)
+    async def fetch_latest(self, limit: int = 40, before: int | None = None) -> list[SourcePost]:
+        return await asyncio.to_thread(self._fetch, before)
 
-    def _fetch(self) -> list[SourcePost]:
-        url = f"https://t.me/s/{self.cfg.source_channel}"
+    def _fetch(self, before: int | None = None) -> list[SourcePost]:
+        # before: صفحة أقدم من المعاينة (لإعادة منشورات محددة بالرقم)
+        url = f"https://t.me/s/{self.cfg.source_channel}" + (f"?before={before}" if before else "")
         try:
             r = self.session.get(url, timeout=25)
         except requests.RequestException as e:

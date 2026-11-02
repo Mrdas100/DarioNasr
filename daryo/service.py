@@ -23,7 +23,7 @@ from .render import RenderError, Renderer, save_png
 from .schedule import in_hours, parse_hours
 from .sources import BotSource, SourceError, WebSource, make_source
 from .telegram_bot import Bot
-from .textutil import normalize_ar
+from .textutil import normalize_ar, unescape_html
 from .collage import make_collage
 from .emoji import EmojiStore
 from .video import VideoError, compose, video_of
@@ -228,7 +228,12 @@ class Service:
         """يجلب آخر n منشورات من صفحة القناة العامة ويعالجها من جديد حتى لو سبق تسجيلها"""
         web = WebSource(self.cfg)
         try:
-            posts = sorted(await web.fetch_latest(), key=lambda x: x.msg_id)
+            posts = await web.fetch_latest()
+            if only and min(only) < min((x.msg_id for x in posts), default=0):
+                # منشورات أقدم من الصفحة الأولى: نجلب صفحتها
+                have = {x.msg_id for x in posts}
+                posts += [x for x in await web.fetch_latest(before=max(only) + 1) if x.msg_id not in have]
+            posts = sorted(posts, key=lambda x: x.msg_id)
             # المنشورات المحددة بالرقم لا يقيدها العدد
             posts = [p for p in posts if p.msg_id in only] if only else posts[-n:]
             if videos_only:
@@ -285,6 +290,7 @@ class Service:
         self.db.set("paused_since", None)
         cutoff = now_utc() - timedelta(minutes=self.cfg.catchup_max_age_min)
         for p in sorted(posts, key=lambda x: x.msg_id):
+            p.text = unescape_html(p.text or "")
             row = self.db.known(p.msg_id)
             h = text_hash(p.text)
             if row is not None:
@@ -306,7 +312,8 @@ class Service:
             await self.process(p)
 
     async def process(self, p: SourcePost, edited_of=None, src=None):
-        raw = p.text or ""
+        p.text = unescape_html(p.text or "")
+        raw = p.text
         norm = normalize_ar(raw)
         base = dict(posted_at=p.date.isoformat(), raw_text=raw, norm_text=norm, text_hash=text_hash(raw))
         msg_id = p.msg_id

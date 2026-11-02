@@ -20,6 +20,17 @@ BIDI_RE = re.compile("[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]")
 NUM_RE = re.compile(r"\d+(?:[.,٫]\d+)?")
 
 
+def unescape_html(text: str) -> str:
+    """رموز HTML من المصدر مثل &amp;amp; تُعاد لأصلها (حتى المرمّزة أكثر من مرة)"""
+    import html
+    for _ in range(4):
+        new = html.unescape(text)
+        if new == text:
+            break
+        text = new
+    return text
+
+
 def strip_decor(text: str, keep_emoji: bool = False) -> str:
     """يحذف الروابط والمعرفات والإيموجي ويحوّل الوسوم إلى كلمات.
     keep_emoji: يُبقي الإيموجي داخل الجملة لعرضه بصور أبل (وتُحذف زخارف بداية السطر)"""
