@@ -288,7 +288,7 @@ def test_poster_media_centered():
     photo = Image.new("RGB", (1280, 720), (90, 90, 90))
     img, over = d._render_poster(snap, photo, lay)
     x0, y0, x1, y1 = [b for n, b in lay.boxes if n == "photo"][0]
-    assert y0 > 150 and "تعليق:" in lay.texts
+    assert y0 > 150 and not any("تعليق" in t for t in lay.texts)
 
 
 def test_dhikr_post_gets_own_template():

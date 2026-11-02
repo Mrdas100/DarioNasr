@@ -146,6 +146,9 @@ class Designer(Renderer):
         lay.texts += [self.handle, self.account_name]
 
     def _label(self, snap: Snap) -> str:
+        # منشورات الرأي بلا مصدر: بدون تصنيف (طلب المالك)
+        if snap.template == "comment":
+            return ""
         return TEMPLATE_AR.get(snap.template, "خبر")
 
     def _extras(self, snap: Snap) -> list[str]:
@@ -238,6 +241,9 @@ class Designer(Renderer):
         d = ImageDraw.Draw(over)
         label = self._label(snap)
         self.font_path = self.bold_path
+        if not label:
+            self._extra_tabs(d, snap, x1 - 6, y, h, lay)
+            return
         size = 56
         tw = self.width(label, size)
         sq = 22
@@ -257,7 +263,9 @@ class Designer(Renderer):
                direction="rtl", language="ar")
         lay.add("chip:" + label, (int(x1 - w - slant), y, x1, y + h))
         lay.texts.append(label)
-        x = x1 - w - slant - 10
+        self._extra_tabs(d, snap, x1 - w - slant - 10, y, h, lay)
+
+    def _extra_tabs(self, d, snap, x, y, h, lay):
         for text in self._extras(snap):
             ew = int(self.width(text, 40) + 70)
             d.polygon([(x, y + 14), (x, y + h), (x - ew - 26, y + h), (x - ew, y + 14)], fill=SLATE + (255,))
@@ -307,16 +315,20 @@ class Designer(Renderer):
         over.alpha_composite(grad, (0, g0))
         d = ImageDraw.Draw(over)
         # التصنيف بخط كبير مع شريط تحته
-        label = {"general": "خبر", "comment": "تعليق"}.get(snap.template, self._label(snap)) + ":"
+        label = {"general": "خبر"}.get(snap.template, self._label(snap))
         self.font_path = self.bold_path
-        lw = self.width(label, 92)
         xr = W - 92
-        d.rectangle((xr - lw - 24, label_top + 74, xr + 14, label_top + 122),
-                    fill=(RED if snap.template == "breaking" else BLUE) + (255,))
-        d.text((xr, label_top + 6), label, font=self.font(92), fill=WHITE, anchor="ra", direction="rtl", language="ar")
-        lay.add("chip:" + label, (int(xr - lw - 24), label_top, xr + 14, label_top + 122))
-        lay.texts.append(label)
-        x = xr - lw - 50
+        x = xr
+        if label:
+            label += ":"
+            lw = self.width(label, 92)
+            d.rectangle((xr - lw - 24, label_top + 74, xr + 14, label_top + 122),
+                        fill=(RED if snap.template == "breaking" else BLUE) + (255,))
+            d.text((xr, label_top + 6), label, font=self.font(92), fill=WHITE, anchor="ra", direction="rtl",
+                   language="ar")
+            lay.add("chip:" + label, (int(xr - lw - 24), label_top, xr + 14, label_top + 122))
+            lay.texts.append(label)
+            x = xr - lw - 50
         for text in self._extras(snap):
             ew = int(self.width(text, 38) + 56)
             d.rounded_rectangle((x - ew, label_top + 62, x, label_top + 122), 30, fill=YELLOW + (255,))
@@ -407,12 +419,15 @@ class Designer(Renderer):
         lw = self.width(label, 54)
         top = 420 + max(0, (TEXT_BOTTOM - 420 - th - 130) // 2)
         box = (int(W / 2 - lw / 2 - 44), top, int(W / 2 + lw / 2 + 44), top + 86)
-        dd.rounded_rectangle(box, 43, fill=(RED if snap.template == "breaking" else YELLOW) + (255,))
-        dd.text((W / 2, top + 46), label, font=self.font(54), anchor="mm", direction="rtl", language="ar",
-                fill=WHITE if snap.template == "breaking" else NAVY)
-        lay.add("chip:" + label, box)
-        lay.texts.append(label)
-        x = box[0] - 16
+        if label:
+            dd.rounded_rectangle(box, 43, fill=(RED if snap.template == "breaking" else YELLOW) + (255,))
+            dd.text((W / 2, top + 46), label, font=self.font(54), anchor="mm", direction="rtl", language="ar",
+                    fill=WHITE if snap.template == "breaking" else NAVY)
+            lay.add("chip:" + label, box)
+            lay.texts.append(label)
+            x = box[0] - 16
+        else:
+            x = W // 2 + 200
         for text in self._extras(snap):
             ew = int(self.width(text, 38) + 50)
             dd.rounded_rectangle((x - ew, top + 14, x, top + 72), 29, outline=WHITE + (255,), width=3)
