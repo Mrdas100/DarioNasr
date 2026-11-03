@@ -152,12 +152,8 @@ class Designer(Renderer):
         return TEMPLATE_AR.get(snap.template, "خبر")
 
     def _extras(self, snap: Snap) -> list[str]:
-        out = []
-        if snap.is_update:
-            out.append("تحديث")
-        if snap.is_rumor:
-            out.append("غير رسمي")
-        return out
+        # لا نضيف أوصافًا من عندنا مثل "غير رسمي" أو "تحديث" (طلب المالك): التصميم ينقل كلام المصدر فقط
+        return []
 
     # ---------- القالب الرئيسي ----------
     def render(self, snap: Snap):
