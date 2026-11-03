@@ -169,8 +169,9 @@ class Designer(Renderer):
             photo = None
         elif photo is None:
             img, over = self._render_text(snap, lay)
-        elif photo.height / photo.width >= 1.12:
-            img, over = self._render_poster(snap, photo, lay)
+        elif photo.height / photo.width >= 1.12 or self._is_video(snap):
+            # الفيديو دائمًا بملء الشاشة (طلب المتابعين)، والصور الطولية بقالب البوستر
+            img, over = self._render_poster(snap, photo, lay, full=self._is_video(snap))
         else:
             try:
                 img, over = self._render_card(snap, photo, lay)
@@ -286,7 +287,12 @@ class Designer(Renderer):
                 d.polygon([(x0, yy), (x0 + 52, yy - 90), (x0 + 52, yy + 230), (x0, yy + 320)], fill=col)
 
     # بوستر: صورة طولية أو فيديو
-    def _render_poster(self, snap, photo, lay):
+    @staticmethod
+    def _is_video(snap) -> bool:
+        from .video import video_of
+        return video_of(snap.image_path) is not None
+
+    def _render_poster(self, snap, photo, lay, full: bool = False):
         img = Image.new("RGB", (W, H), NAVY)
         # بعرض التصميم كاملًا، إلا إن كانت أطول منه أو صغيرة الدقة فتُعرض كاملة على خلفية مموهة منها
         bg = ImageOps.fit(photo, (W // 6, H // 6)).filter(ImageFilter.GaussianBlur(6)).resize((W, H))
@@ -300,17 +306,26 @@ class Designer(Renderer):
         label_top = text_top - label_h - 10
         # الصورة/الفيديو كاملة فوق النص (لا يغطيها شيء) وفي وسط تلك المساحة
         free = label_top - 30
-        scale = min(W / photo.width, free / photo.height, MAX_UPSCALE)
-        ph, pw = int(photo.height * scale), int(photo.width * scale)
-        px, py = (W - pw) // 2, max(0, (free - ph) // 2)
+        if full:
+            # فيديو: يعبي الشاشة بعرضها (والطولي يعبيها كاملة) والنص فوقه على تظليل
+            scale = min(W / photo.width, H / photo.height)
+            ph, pw = int(photo.height * scale), int(photo.width * scale)
+            py = (free - ph) // 2 if ph <= free else (H - ph) // 2
+        else:
+            scale = min(W / photo.width, free / photo.height, MAX_UPSCALE)
+            ph, pw = int(photo.height * scale), int(photo.width * scale)
+            py = max(0, (free - ph) // 2)
+        px = (W - pw) // 2
         img.paste(photo.resize((pw, ph), Image.LANCZOS), (px, py))
         lay.add("photo", (px, py, px + pw, py + ph))
-        lay.image_used, lay.image_scale, lay.photo_radius = True, scale, 0
+        # الفيديو يتحرك فتكبيره بملء الشاشة مقبول أكثر من الصورة الثابتة
+        lay.image_used, lay.image_scale, lay.photo_radius = True, min(scale, MAX_UPSCALE) if full else scale, 0
         lay.text_on_photo = True   # خلفية داكنة: الفوتر بالأبيض
         # تدرج كحلي يبدأ فوق العنوان بمسافة ويغطي الأسفل
-        g0 = max(0, label_top - 420, py + ph - 10)
+        g0 = max(0, label_top - 420) if full else max(0, label_top - 420, py + ph - 10)
         grad = Image.new("RGBA", (W, H - g0), NAVY + (0,))
-        alpha = Image.linear_gradient("L").resize((W, H - g0)).point(lambda v: min(255, int(v * 1.8)))
+        top_a = 215 if full else 255     # فوق الفيديو تظليل أخف يبقيه ظاهرًا تحت النص
+        alpha = Image.linear_gradient("L").resize((W, H - g0)).point(lambda v: min(top_a, int(v * 1.8)))
         grad.putalpha(alpha)
         over.alpha_composite(grad, (0, g0))
         d = ImageDraw.Draw(over)
