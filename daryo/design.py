@@ -78,7 +78,7 @@ class Designer(Renderer):
         y = 0
         for name, text, start, minimum, max_lines, color, gap, weight in blocks:
             self.font_path = self.semibold_path if weight == "semi" else self.bold_path
-            size, lines = self.fit(text, max_w, int(start), int(minimum), max_lines)
+            size, lines = self.fit(text, max_w, int(start), int(min(minimum, start)), max_lines)
             if size is None:
                 lay.overflow.append(name)
                 size, lines = int(minimum), lines[:max_lines]
@@ -93,6 +93,7 @@ class Designer(Renderer):
 
     def _blocks(self, s: Snap, k: float, main, accent, muted):
         """(اسم، نص، حجم، أدنى، أسطر، لون، فراغ، وزن)"""
+        k *= 0.8    # خط أصغر بطلب المالك (2026-11-04)
         b = []
         if s.kicker:
             b.append(("text:kicker", s.kicker, 60 * k, 44, 1, accent, 0, "bold"))
@@ -332,12 +333,12 @@ class Designer(Renderer):
         x = xr
         if label:
             label += ":"
-            lw = self.width(label, 92)
-            d.rectangle((xr - lw - 24, label_top + 74, xr + 14, label_top + 122),
+            lw = self.width(label, 74)
+            d.rectangle((xr - lw - 20, label_top + 66, xr + 12, label_top + 104),
                         fill=(RED if snap.template == "breaking" else BLUE) + (255,))
-            d.text((xr, label_top + 6), label, font=self.font(92), fill=WHITE, anchor="ra", direction="rtl",
+            d.text((xr, label_top + 6), label, font=self.font(74), fill=WHITE, anchor="ra", direction="rtl",
                    language="ar")
-            lay.add("chip:" + label, (int(xr - lw - 24), label_top, xr + 14, label_top + 122))
+            lay.add("chip:" + label, (int(xr - lw - 20), label_top + 20, xr + 12, label_top + 104))
             lay.texts.append(label)
             x = xr - lw - 50
         for text in self._extras(snap):
