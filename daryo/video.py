@@ -9,7 +9,8 @@ from PIL import Image, ImageDraw
 
 log = logging.getLogger("daryo.video")
 
-MAX_SEC = 60           # أطول مدة للسنابة الواحدة
+MAX_SEC = 300          # أطول مدة للسنابة الواحدة (5 دقائق، طلب المالك)
+MAX_MB = 45            # حد رفع البوت في تيليجرام 50MB
 
 
 class VideoError(Exception):
@@ -31,6 +32,14 @@ def duration(video: Path) -> float:
         return float(r.stdout.strip())
     except ValueError:
         raise VideoError("تعذر قراءة مدة الفيديو الأصلي")
+
+
+def _cap(secs: float) -> list[str]:
+    """الفيديو الطويل: سقف لمعدل البت حتى يبقى الملف تحت حد رفع تيليجرام"""
+    kbps = int(MAX_MB * 8 * 1024 / max(secs, 1)) - 160
+    if kbps >= 6000:
+        return []
+    return ["-maxrate", f"{kbps}k", "-bufsize", f"{kbps * 2}k"]
 
 
 def compose(png: Path, video: Path, box: tuple[int, int, int, int], out: Path, radius: int = 26,
@@ -56,10 +65,10 @@ def compose(png: Path, video: Path, box: tuple[int, int, int, int], out: Path, r
         flt += ",format=yuv420p[out]"
     cmd = ["ffmpeg", "-y", "-loglevel", "error", *inputs,
            "-filter_complex", flt, "-map", "[out]", "-map", "1:a?",
-           "-t", f"{secs:.3f}", "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+           "-t", f"{secs:.3f}", "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", *_cap(secs),
            "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out)]
     try:
-        subprocess.run(cmd, check=True, timeout=300, capture_output=True)
+        subprocess.run(cmd, check=True, timeout=1200, capture_output=True)
     except subprocess.CalledProcessError as e:
         raise VideoError((e.stderr or b"").decode(errors="ignore")[-300:] or str(e))
     except Exception as e:
