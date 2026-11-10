@@ -1,36 +1,39 @@
-"""قوالب داريو النصر بأسلوب البطاقة والبوستر (مستوحاة من نماذج صاحب الحساب) بألوان النصر
+"""Editorial Snapchat templates sharing one type scale, grid and safe area.
 
-- card: خلفية فاتحة بأشرطة مائلة، بطاقة فيها الصورة كاملة وشارة الشعار، تبويب عاجل، ولوحة نص بيضاء
-- poster: الصورة بعرض التصميم كاملًا وتتدرج إلى الكحلي، والعنوان أبيض بمحاذاة اليمين مع خط جانبي
-- text: بدون صورة، خلفية كحلية متدرجة ونص أبيض كبير
-
-كل ما فوق الصورة يُرسم في طبقة شفافة منفصلة (lay.overlay) حتى يبقى فوق الفيديو أيضًا
+Real source media stays intact. Text, branding and video overlays share the
+same measured geometry; overflow raises instead of silently cutting content.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 
 from .models import TEMPLATE_AR, Snap
 from .render import FOOTER_TOP, H, SAFE_TOP, W, Layout, RenderError, Renderer
 
-BLUE = (24, 58, 150)          # أزرق النصر
+BLUE = (24, 58, 150)
 NAVY = (9, 22, 58)
-INK = (14, 24, 52)            # نص داكن على الأبيض
+INK = (14, 24, 52)
 YELLOW = (255, 204, 0)
-GOLD = (226, 188, 98)          # ذهبي هادئ لقالب الأذكار
-RED = (226, 32, 44)
-SLATE = (42, 52, 72)
+RED = (215, 27, 48)
 WHITE = (255, 255, 255)
-MUTED = (88, 98, 120)
-LIGHT = (238, 240, 246)
+MUTED = (89, 100, 121)
+LIGHT = (243, 245, 249)
+BORDER = (222, 227, 237)
+GOLD = (190, 151, 68)
+LEFT, RIGHT = 84, W - 84
+WIDTH = RIGHT - LEFT
+TEXT_BOTTOM = FOOTER_TOP - 42
+MAX_UPSCALE = 2.1
 
-CARD_X0, CARD_X1 = 84, W - 84
-CARD_W = CARD_X1 - CARD_X0
-CARD_R = 30
-TEXT_BOTTOM = FOOTER_TOP - 20
-MAX_UPSCALE = 2.1           # أكثر من هذا تظهر الصورة مشوشة
+
+def create_renderer(cfg, emoji=None):
+    """The service and CLI must preview exactly the same selected renderer."""
+    if cfg.design_style in ("clean", "cinema", "brand"):
+        return LegacyDesigner(cfg, emoji)
+    return Designer(cfg.font_path, cfg.logo_path, cfg.snap_handle, cfg.account_name, emoji=emoji)
 
 
 class Designer(Renderer):
@@ -42,410 +45,289 @@ class Designer(Renderer):
             Path(font_path).name.replace("-Bold", "-SemiBold"))
         self.semibold_path = str(sb) if sb.exists() else self.bold_path
 
-    # ---------- أدوات ----------
-    def _logo_img(self, max_w: int, max_h: int) -> Image.Image | None:
+    @staticmethod
+    def line_h(size):
+        return int(size * 1.42)
+
+    @staticmethod
+    def _is_video(snap):
+        from .video import video_of
+        return video_of(snap.image_path) is not None
+
+    def paginate(self, snap: Snap) -> list[Snap]:
+        """Preserve every word / row on numbered pages rather than shrink to dust."""
+        pages = []
+        if snap.rows:
+            from math import ceil
+            capacity = 2 if snap.image_path else 6
+            count = ceil(len(snap.rows) / capacity)
+            size = ceil(len(snap.rows) / count)
+            for i in range(0, len(snap.rows), size):
+                pages.append(replace(snap, rows=snap.rows[i:i + size]))
+        else:
+            field = "quote" if snap.template == "statement" and snap.quote else "body"
+            value = getattr(snap, field)
+            limit = (32 if snap.image_path else 50) if field == "quote" else (32 if snap.image_path else 54)
+            words = value.split()
+            if len(words) > limit:
+                for i in range(0, len(words), limit):
+                    chunk = " ".join(words[i:i + limit])
+                    updates = {field: chunk}
+                    if field == "quote" and snap.headline == snap.quote:
+                        updates["headline"] = chunk
+                    pages.append(replace(snap, **updates))
+        if not pages:
+            pages = [replace(snap)]
+        # Word counts are a useful starting point, but Arabic names and mixed
+        # alphanumerics vary in width. Validate actual geometry, then bisect
+        # overflowing body / quote chunks without losing any source words.
+        fitted = []
+        pending = list(pages)
+        while pending:
+            page = pending.pop(0)
+            try:
+                self.render(page)
+                fitted.append(page)
+            except RenderError:
+                field = "quote" if page.template == "statement" and page.quote else "body"
+                words = getattr(page, field).split()
+                if page.rows or len(words) < 2:
+                    raise
+                mid = len(words) // 2
+                halves = []
+                for part in (words[:mid], words[mid:]):
+                    value = " ".join(part)
+                    changes = {field: value}
+                    if field == "quote" and page.headline == page.quote:
+                        changes["headline"] = value
+                    halves.append(replace(page, **changes))
+                pending[0:0] = halves
+        return [replace(p, page=i + 1, pages=len(fitted)) for i, p in enumerate(fitted)]
+
+    def _logo_img(self, max_w, max_h):
         if not self.logo_path:
             return None
-        logo = Image.open(self.logo_path).convert("RGBA")
-        bbox = logo.getchannel("A").getbbox()
-        if bbox:
-            logo = logo.crop(bbox)
-        logo.thumbnail((max_w, max_h), Image.LANCZOS)
+        with Image.open(self.logo_path) as source:
+            logo = source.convert("RGBA")
+        box = logo.getchannel("A").getbbox()
+        if box:
+            logo = logo.crop(box)
+        logo.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
         return logo
 
-    def _logo_badge(self, over: Image.Image, x1: int, y0: int, lay: Layout, size=(150, 160), round_all=False):
-        """شارة كحلية فيها الشعار في الزاوية العليا اليمنى"""
-        w, h = size
+    def _header(self, over, snap, lay, dark=False):
         d = ImageDraw.Draw(over)
-        box = (x1 - w, y0, x1, y0 + h)
-        if round_all:
-            d.rounded_rectangle(box, 26, fill=NAVY + (235,))
-        else:
-            d.rounded_rectangle(box, 26, fill=NAVY + (255,), corners=(False, True, False, True))
-        d.rectangle((box[0], box[3] - 8, box[2], box[3]), fill=YELLOW + (255,)) if not round_all else None
-        logo = self._logo_img(w - 26, h - 34)
+        fg = WHITE if dark else INK
+        d.rectangle((LEFT, SAFE_TOP + 12, LEFT + 72, SAFE_TOP + 20), fill=YELLOW)
+        # A compact original logo, consistently sized across all templates.
+        box = (RIGHT - 142, SAFE_TOP + 4, RIGHT, SAFE_TOP + 148)
+        d.rounded_rectangle(box, 22, fill=NAVY)
+        logo = self._logo_img(116, 122)
         if logo is not None:
-            over.paste(logo, (box[0] + (w - logo.width) // 2, y0 + (h - 8 - logo.height) // 2), logo)
+            over.alpha_composite(logo, (box[0] + (142 - logo.width) // 2,
+                                        box[1] + (144 - logo.height) // 2))
+        else:
+            d.text((RIGHT - 71, SAFE_TOP + 65), self.account_name, font=self.font(24),
+                   anchor="mm", direction="rtl", language="ar", fill=WHITE)
         lay.add("logo", box)
+        label = "" if snap.template == "comment" else TEMPLATE_AR.get(snap.template, "أخبار النصر")
+        if snap.template == "availability" and any(t in snap.headline for t in ("إصابات", "اصابات")):
+            label = "الإصابات"
+        if label:
+            width = max(145, int(self.width(label, 38)) + 58)
+            bg = RED if snap.template == "breaking" else (YELLOW if snap.template == "tickets" else fg)
+            color = WHITE if snap.template == "breaking" or not dark and snap.template != "tickets" else NAVY
+            chip = (LEFT, SAFE_TOP + 58, LEFT + width, SAFE_TOP + 126)
+            d.rounded_rectangle(chip, 14, fill=bg)
+            d.text((LEFT + width / 2, SAFE_TOP + 92), label, font=self.font(38),
+                   anchor="mm", direction="rtl", language="ar", fill=color)
+            lay.add("chip:" + label, chip)
+            lay.texts.append(label)
+        d.line((LEFT, 328, RIGHT, 328), fill=(55, 70, 102) if dark else BORDER, width=2)
 
-    def _text(self, over: Image.Image, blocks, x_right: int, top: int, max_w: int, align: str, lay: Layout,
-              dry: bool = False) -> int:
-        """يرسم كتل النص ويعيد الارتفاع. dry=True يقيس فقط"""
-        layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        self._target = layer
-        first = len(lay.boxes)
-        d = ImageDraw.Draw(layer)
-        y = 0
-        for name, text, start, minimum, max_lines, color, gap, weight in blocks:
-            self.font_path = self.semibold_path if weight == "semi" else self.bold_path
-            size, lines = self.fit(text, max_w, int(start), int(min(minimum, start)), max_lines)
-            if size is None:
-                lay.overflow.append(name)
-                size, lines = int(minimum), lines[:max_lines]
+    def _footer(self, over, snap, lay, dark=False):
+        d = ImageDraw.Draw(over)
+        y = FOOTER_TOP + 36
+        color = WHITE if dark else INK
+        d.line((LEFT, FOOTER_TOP, RIGHT, FOOTER_TOP), fill=(55, 70, 102) if dark else BORDER, width=2)
+        d.text((RIGHT, y), self.account_name, font=self.font(34), anchor="rm",
+               direction="rtl", language="ar", fill=color)
+        # Explicit LTR segment keeps the Latin username and numbers stable.
+        d.text((LEFT, y), self.handle, font=self.font(38), anchor="lm", direction="ltr",
+               fill=YELLOW if dark else BLUE)
+        if snap.pages > 1:
+            d.text((W // 2, y), f"{snap.page} / {snap.pages}", font=self.font(28),
+                   anchor="mm", direction="ltr", fill=GOLD if dark else MUTED)
+        lay.add("footer", (0, FOOTER_TOP, W, H))
+        lay.texts.extend((self.handle, self.account_name))
+
+    def _blocks(self, snap, dark=False):
+        main, accent, muted = (WHITE, YELLOW, (208, 216, 232)) if dark else (INK, BLUE, MUTED)
+        out = []
+        def add(name, value, size, minimum, lines, color, gap=0, weight="bold"):
+            if value:
+                out.append(("text:" + name, value, size, minimum, lines, color, gap, weight))
+        if snap.kicker and snap.kicker != TEMPLATE_AR.get(snap.template):
+            add("kicker", snap.kicker, 36, 32, 2, accent)
+        if snap.template == "statement":
+            add("speaker", snap.speaker, 43, 36, 2, accent, 0)
+            add("quote", snap.quote or snap.headline, 76, 48, 12, main, 24)
+            add("body", snap.body, 44, 38, 5, muted, 30, "semi")
+        elif snap.template == "stats":
+            add("number", snap.number, 180, 120, 1, accent)
+            add("number_caption", snap.number_caption, 45, 38, 2, muted, 8)
+            add("headline", snap.headline, 69, 50, 4, main, 30)
+            add("body", snap.body, 46, 38, 6, muted, 24, "semi")
+        else:
+            add("headline", snap.headline, 80 if not snap.rows else 70, 52, 5, main)
+            add("body", snap.body, 48, 40, 9, muted, 30, "semi")
+        return out
+
+    def _measure(self, blocks, width, max_h):
+        """Measure without polluting QA boxes. No cutting lines on failure."""
+        original = self.font_path
+        try:
+            for scale in (1.0, .95, .9, .85, .8, .75, .7):
+                result, height = [], 0
+                for name, text, start, minimum, max_lines, color, gap, weight in blocks:
+                    self.font_path = self.semibold_path if weight == "semi" else self.bold_path
+                    size, lines = self.fit(text, width, max(minimum, int(start * scale)), minimum, max_lines)
+                    if size is None:
+                        break
+                    height += gap + len(lines) * self.line_h(size)
+                    result.append((name, lines, size, color, gap, self.font_path))
+                if len(result) == len(blocks) and height <= max_h:
+                    return result, height
+        finally:
+            self.font_path = original
+        raise RenderError("المحتوى أطول من مساحة القالب؛ يحتاج تقسيمًا إلى سنابات")
+
+    def _draw_blocks(self, over, measured, top, lay, align="right", right=RIGHT):
+        self._target = over
+        d = ImageDraw.Draw(over)
+        y = top
+        for name, lines, size, color, gap, font_path in measured:
+            self.font_path = font_path
             y += gap
-            y = self.draw_lines(d, lines, size, y, color, lay, name, align=align, x_right=x_right)
+            y = self.draw_lines(d, lines, size, y, color, lay, name, align=align, x_right=right)
         self.font_path = self.bold_path
-        if not dry:
-            over.alpha_composite(layer.crop((0, 0, W, y + 20)), (0, top))
-            lay.boxes = lay.boxes[:first] + [(n, (b[0], b[1] + top, b[2], b[3] + top))
-                                             for n, b in lay.boxes[first:]]
         return y
 
-    def _blocks(self, s: Snap, k: float, main, accent, muted):
-        """(اسم، نص، حجم، أدنى، أسطر، لون، فراغ، وزن)"""
-        k *= 0.8    # خط أصغر بطلب المالك (2026-11-04)
-        b = []
-        if s.kicker:
-            b.append(("text:kicker", s.kicker, 60 * k, 44, 1, accent, 0, "bold"))
-        if s.template == "statement":
-            if s.speaker:
-                b.append(("text:speaker", s.speaker, 52 * k, 38, 1, accent, 0, "bold"))
-            b.append(("text:quote", s.quote or s.headline, 66 * k, 36, 10, main, 10, "bold"))
-            if s.body and s.quote:
-                b.append(("text:body", s.body, 44 * k, 34, 3, muted, 14, "semi"))
-        elif s.template == "dhikr":
-            b.append(("text:headline", s.headline, 64 * k, 40, 10, main, 0, "bold"))
-        elif s.template == "stats":
-            if s.number:
-                b.append(("text:number", s.number, 170 * k, 110, 1, accent, 0, "bold"))
-            b.append(("text:headline", s.headline, 62 * k, 42, 3, main, 6, "bold"))
-            if s.body:
-                b.append(("text:body", s.body, 44 * k, 34, 3, muted, 12, "semi"))
-        else:
-            b.append(("text:headline", s.headline, 70 * k, 46, 3, main, 0, "bold"))
-            if s.body:
-                b.append(("text:body", s.body, 46 * k, 34, 5, muted, 16, "semi"))
-        return b
+    def _photo(self, img, photo, top, height, lay):
+        """Contain source pixels within a neutral panel; never crop a face or crest."""
+        scale = min(WIDTH / photo.width, height / photo.height, MAX_UPSCALE)
+        pw, ph = max(1, int(photo.width * scale)), max(1, int(photo.height * scale))
+        x, y = (W - pw) // 2, top + (height - ph) // 2
+        ImageDraw.Draw(img).rounded_rectangle((LEFT, top, RIGHT, top + height), 24, fill=LIGHT)
+        img.paste(photo.resize((pw, ph), Image.Resampling.LANCZOS), (x, y))
+        lay.add("photo", (x, y, x + pw, y + ph))
+        lay.image_used, lay.image_scale, lay.photo_radius = True, scale, 0
 
-    def _fit_blocks(self, snap, max_h, max_w, colors, lay, tiers=(1.2, 1.1, 1.0, 0.9, 0.8, 0.72)):
-        base = (list(lay.boxes), list(lay.texts))
-        for k in tiers:
-            lay.boxes, lay.texts, lay.overflow = list(base[0]), list(base[1]), []
-            blocks = self._blocks(snap, k, *colors)
-            h = self._text(None, blocks, 0, 0, max_w, "center", lay, dry=True)
-            if h <= max_h and not lay.overflow:
-                break
-        lay.boxes, lay.texts, lay.overflow = list(base[0]), list(base[1]), []
-        return blocks, h
+    def _render_media(self, snap, photo, lay):
+        img, over = Image.new("RGB", (W, H), WHITE), Image.new("RGBA", (W, H))
+        self._header(over, snap, lay)
+        blocks = self._blocks(snap)
+        measured, th = self._measure(blocks, WIDTH, 790 if not snap.rows else 380)
+        # All text stays below source media. Portraits receive more of the
+        # available space without forcing the title into Snapchat's reply bar.
+        row_h = self._rows_height(snap.rows)
+        photo_h = min(780 if photo.height > photo.width else 580,
+                      TEXT_BOTTOM - 364 - th - row_h - 48)
+        if photo_h < 260:
+            raise RenderError("المحتوى والصورة لا يتسعان في القالب")
+        self._photo(img, photo, 364, int(photo_h), lay)
+        top = 364 + int(photo_h) + 48
+        y = self._draw_blocks(over, measured, top, lay)
+        if snap.rows:
+            self._rows(over, snap.rows, y + 26, lay)
+        return img, over
 
-    def _footer(self, over: Image.Image, lay: Layout, dark: bool):
+    def _render_poster(self, snap, photo, lay, full=False):
+        # Public compatibility entry point. Video uses the exact same photo
+        # box as the still so its geometry cannot cover the headline.
+        return self._render_media(snap, photo, lay)
+
+    def _render_card(self, snap, photo, lay):
+        return self._render_media(snap, photo, lay)
+
+    def _rows_height(self, rows):
+        return len(rows) * 132 + (26 if rows else 0)
+
+    def _rows(self, over, rows, top, lay):
         d = ImageDraw.Draw(over)
-        y = FOOTER_TOP + 40
-        self.font_path = self.bold_path
-        hw = self.font(44).getlength(self.handle)
-        aw = self.width(self.account_name, 40)
-        gap = 28
-        total = hw + gap * 2 + aw
-        x0 = W / 2 - total / 2
-        d.rounded_rectangle((x0 - 34, y - 38, x0 + total + 34, y + 38), 38,
-                            fill=(26, 44, 92, 255) if dark else WHITE + (255,))
-        d.text((x0, y), self.handle, font=self.font(44), fill=YELLOW if dark else BLUE, anchor="lm")
-        d.line((x0 + hw + gap, y - 16, x0 + hw + gap, y + 16), fill=(180, 186, 200), width=3)
-        d.text((x0 + total, y), self.account_name, font=self.font(40), fill=WHITE if dark else INK, anchor="rm",
-               direction="rtl", language="ar")
-        lay.add("footer", (0, FOOTER_TOP, W, H))
-        lay.texts += [self.handle, self.account_name]
+        for i, (label, value) in enumerate(rows):
+            y = top + i * 132
+            d.rounded_rectangle((LEFT, y, RIGHT, y + 114), 18, fill=LIGHT)
+            d.rectangle((RIGHT - 5, y + 22, RIGHT, y + 92), fill=YELLOW)
+            # Independent cells avoid bidi collisions between labels, prices,
+            # parentheses and numeric ranges.
+            label_lines, lh = self._measure([("text:row_label", label, 45, 32, 2, INK, 0, "bold")],
+                                           510, 94)
+            self._draw_blocks(over, label_lines, y + (114 - lh) // 2, lay, right=RIGHT - 28)
+            self.font_path = self.bold_path
+            size, lines = self.fit(value, 280, 43, 32, 2)
+            if size is None:
+                raise RenderError("قيمة الصف أطول من مساحة الخانة")
+            h = len(lines) * self.line_h(size)
+            self._target = over
+            self.draw_lines(d, lines, size, y + (114 - h) // 2, BLUE, lay,
+                            "text:row_value", align="right", x_right=LEFT + 304)
 
-    def _label(self, snap: Snap) -> str:
-        # منشورات الرأي بلا مصدر: بدون تصنيف (طلب المالك)
-        if snap.template == "comment":
-            return ""
-        return TEMPLATE_AR.get(snap.template, "خبر")
+    def _render_text(self, snap, lay):
+        img, over = Image.new("RGB", (W, H), WHITE), Image.new("RGBA", (W, H))
+        self._header(over, snap, lay)
+        blocks = self._blocks(snap)
+        row_h = self._rows_height(snap.rows)
+        top = 444 if snap.rows else 490
+        measured, th = self._measure(blocks, WIDTH, TEXT_BOTTOM - top - row_h)
+        # Anchor news to a consistent editorial grid instead of vertically
+        # centering each post and producing enormous empty areas above it.
+        if snap.template == "statement":
+            d = ImageDraw.Draw(over)
+            d.rounded_rectangle((LEFT, 378, LEFT + 92, 438), 12, fill=YELLOW)
+            d.text((LEFT + 46, 410), "«", font=self.font(76), anchor="mm", fill=INK)
+        self._draw_blocks(over, measured, top, lay)
+        if snap.rows:
+            self._rows(over, snap.rows, top + th + 26, lay)
+        elif snap.template != "dhikr":
+            d = ImageDraw.Draw(over)
+            end = min(top + th + 72, TEXT_BOTTOM - 18)
+            d.line((RIGHT - 96, end, RIGHT, end), fill=YELLOW, width=8)
+        return img, over
 
-    def _extras(self, snap: Snap) -> list[str]:
-        # لا نضيف أوصافًا من عندنا مثل "غير رسمي" أو "تحديث" (طلب المالك): التصميم ينقل كلام المصدر فقط
-        return []
+    def _render_dhikr(self, snap, lay):
+        img, over = Image.new("RGB", (W, H), NAVY), Image.new("RGBA", (W, H))
+        self._header(over, snap, lay, dark=True)
+        measured, th = self._measure(self._blocks(snap, dark=True), WIDTH - 64, 1070)
+        top = 430 + max(0, (1120 - th) // 2)
+        self._draw_blocks(over, measured, top, lay, align="center")
+        return img, over
 
-    # ---------- القالب الرئيسي ----------
     def render(self, snap: Snap):
-        photo = self.load_photo(snap.image_path)
         lay = Layout()
         lay.fonts.add(self.bold_path)
+        photo = self.load_photo(snap.image_path) if snap.template != "dhikr" else None
         if snap.template == "dhikr":
             img, over = self._render_dhikr(snap, lay)
-            photo = None
-        elif photo is None:
-            img, over = self._render_text(snap, lay)
-        elif photo.height / photo.width >= 1.12 or self._is_video(snap):
-            # الفيديو دائمًا بملء الشاشة (طلب المتابعين)، والصور الطولية بقالب البوستر
-            img, over = self._render_poster(snap, photo, lay, full=self._is_video(snap))
+        elif photo is not None:
+            img, over = self._render_media(snap, photo, lay)
         else:
-            try:
-                img, over = self._render_card(snap, photo, lay)
-            except RenderError:
-                # نص طويل مع صورة عريضة: قالب البوستر يتسع للنص فوق الصورة
-                lay = Layout()
-                lay.fonts.add(self.bold_path)
-                img, over = self._render_poster(snap, photo, lay)
-        self._footer(over, lay, dark=photo is None or lay.text_on_photo)
-        lay.overlay, lay.base = over, img
+            img, over = self._render_text(snap, lay)
+        self._footer(over, snap, lay, dark=snap.template == "dhikr")
+        lay.base, lay.overlay = img, over
         final = img.convert("RGBA")
         final.alpha_composite(over)
         return final.convert("RGB"), lay
 
-    # بطاقة: صورة عريضة أو مربعة
-    def _render_card(self, snap, photo, lay):
-        img = Image.new("RGB", (W, H), LIGHT)
-        self._card_background(img)
-        over = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        tab_h = 84
-        max_w = CARD_W - 110
-        colors = (INK, BLUE, MUTED)
-        room = TEXT_BOTTOM - (SAFE_TOP + 70)
-        natural = int(photo.height * min(CARD_W / photo.width, MAX_UPSCALE)) + tab_h
-        # النص أولًا بحد أقصى يترك للصورة 620 على الأقل
-        blocks, th = self._fit_blocks(snap, max(220, room - min(natural, 620) - 150), max_w, colors, lay)
-        panel_h = max(300, th + 150)
-        ph = min(natural, room - panel_h)
-        if ph < 420:
-            raise RenderError("النص طويل ولا يترك مساحة كافية للصورة")
-        total = ph + panel_h
-        top = SAFE_TOP + 70 + max(0, (TEXT_BOTTOM - SAFE_TOP - 70 - total) // 2)
-        if top + total > TEXT_BOTTOM + 4:
-            raise RenderError("النص طويل ولا يترك مساحة كافية للصورة")
-        # الصورة كاملة: بعرض البطاقة، وإن كانت أطول من المساحة تُصغّر وتملأ الجوانب نسخة مموهة منها
-        # تبويب التصنيف يجلس أسفل مساحة الصورة: الصورة فوقه فلا يغطي منها شيئًا
-        room_h = ph - tab_h
-        scale = min(CARD_W / photo.width, room_h / photo.height, MAX_UPSCALE)
-        pw, phh = int(photo.width * scale), int(photo.height * scale)
-        resized = ImageOps.fit(photo, (CARD_W // 6, max(1, ph // 6))).filter(ImageFilter.GaussianBlur(5))
-        resized = Image.blend(resized.resize((CARD_W, ph)), Image.new("RGB", (CARD_W, ph), NAVY), 0.45)
-        resized.paste(photo.resize((pw, phh), Image.LANCZOS), ((CARD_W - pw) // 2, (room_h - phh) // 2))
-        shadow = Image.new("RGBA", (CARD_W + 80, total + 80), (0, 0, 0, 0))
-        ImageDraw.Draw(shadow).rounded_rectangle((40, 52, CARD_W + 40, total + 40), CARD_R, fill=(10, 20, 50, 70))
-        shadow = shadow.filter(ImageFilter.GaussianBlur(20))
-        img.paste(shadow, (CARD_X0 - 40, top - 40), shadow)
-        mask = Image.new("L", (CARD_W, ph), 0)
-        ImageDraw.Draw(mask).rounded_rectangle((0, 0, CARD_W - 1, ph + CARD_R), CARD_R, fill=255)
-        img.paste(resized, (CARD_X0, top), mask)
-        px0, py0 = CARD_X0 + (CARD_W - pw) // 2, top + (room_h - phh) // 2
-        lay.add("photo", (px0, py0, px0 + pw, py0 + phh))
-        lay.image_used, lay.image_scale, lay.photo_radius = True, scale, CARD_R if pw >= CARD_W - 2 else 0
-        d = ImageDraw.Draw(over)
-        # إطار رفيع للبطاقة
-        d.rounded_rectangle((CARD_X0 - 3, top - 3, CARD_X1 + 3, top + total + 3), CARD_R + 3, outline=BLUE + (255,),
-                            width=4)
-        # لوحة النص البيضاء
-        pt = top + ph
-        d.rounded_rectangle((CARD_X0, pt, CARD_X1, top + total), CARD_R, fill=WHITE + (255,),
-                            corners=(False, False, True, True))
-        self._logo_badge(over, CARD_X1, top, lay)
-        # تبويبات أسفل الصورة: التصنيف ثم الإضافات (تحديث / غير رسمي)
-        self._tabs(over, snap, CARD_X1 - 14, pt - tab_h + 2, tab_h, lay)
-        self._text(over, blocks, W // 2, pt + (panel_h - th) // 2 - 6, max_w, "center", lay)
-        return img, over
 
-    def _tabs(self, over, snap, x1, y, h, lay):
-        d = ImageDraw.Draw(over)
-        label = self._label(snap)
-        self.font_path = self.bold_path
-        if not label:
-            self._extra_tabs(d, snap, x1 - 6, y, h, lay)
-            return
-        size = 56
-        tw = self.width(label, size)
-        sq = 22
-        w = int(tw + sq + 110)
-        slant = 34
-        # حدّ أبيض حول التبويب كما في النموذج
-        d.polygon([(x1 + 8, y - 8), (x1 + 8, y + h), (x1 - w - slant - 10, y + h), (x1 - w - 6, y - 8)],
-                  fill=WHITE + (255,))
-        d.rounded_rectangle((x1 - w, y, x1, y + h), 16, fill=(RED if snap.template == "breaking" else BLUE) + (255,),
-                            corners=(True, True, False, False))
-        d.polygon([(x1 - w + 10, y), (x1 - w + 10, y + h), (x1 - w - slant, y + h)],
-                  fill=(RED if snap.template == "breaking" else BLUE) + (255,))
-        cx = x1 - 40
-        d.rectangle((cx - sq, y + h / 2 - sq / 2 + 2, cx, y + h / 2 + sq / 2 + 2),
-                    fill=(WHITE if snap.template == "breaking" else RED) + (255,))
-        d.text((cx - sq - 18, y + h / 2 + 4), label, font=self.font(size), fill=WHITE, anchor="rm",
-               direction="rtl", language="ar")
-        lay.add("chip:" + label, (int(x1 - w - slant), y, x1, y + h))
-        lay.texts.append(label)
-        self._extra_tabs(d, snap, x1 - w - slant - 10, y, h, lay)
+class LegacyDesigner(Designer):
+    """Keep optional old themes while supporting structured news and pagination."""
+    def __init__(self, cfg, emoji=None):
+        super().__init__(cfg.font_path, cfg.logo_path, cfg.snap_handle, cfg.account_name, emoji=emoji)
+        self.legacy = Renderer(cfg.font_path, cfg.logo_path, cfg.snap_handle, cfg.account_name,
+                               emoji=emoji, style=cfg.design_style)
 
-    def _extra_tabs(self, d, snap, x, y, h, lay):
-        for text in self._extras(snap):
-            ew = int(self.width(text, 40) + 70)
-            d.polygon([(x, y + 14), (x, y + h), (x - ew - 26, y + h), (x - ew, y + 14)], fill=SLATE + (255,))
-            d.text((x - ew / 2 - 10, y + h / 2 + 10), text, font=self.font(40), fill=WHITE, anchor="mm",
-                   direction="rtl", language="ar")
-            lay.add("chip:" + text, (int(x - ew - 26), y + 14, int(x), y + h))
-            lay.texts.append(text)
-            x -= ew + 30
-
-    def _card_background(self, img):
-        d = ImageDraw.Draw(img)
-        g = Image.linear_gradient("L").resize((W, H)).point(lambda v: 255 - v // 6)
-        img.paste(Image.new("RGB", (W, H), (226, 230, 240)), (0, 0), g.point(lambda v: 255 - v))
-        # أشرطة مائلة على الأطراف بألوان النصر
-        for x0, ys in ((-30, (380, 1020, 1500)), (W - 22, (160, 640, 1260))):
-            for i, yy in enumerate(ys):
-                col = BLUE if i % 2 == 0 else YELLOW
-                d.polygon([(x0, yy), (x0 + 52, yy - 90), (x0 + 52, yy + 230), (x0, yy + 320)], fill=col)
-
-    # بوستر: صورة طولية أو فيديو
-    @staticmethod
-    def _is_video(snap) -> bool:
-        from .video import video_of
-        return video_of(snap.image_path) is not None
-
-    def _render_poster(self, snap, photo, lay, full: bool = False):
-        img = Image.new("RGB", (W, H), NAVY)
-        # بعرض التصميم كاملًا، إلا إن كانت أطول منه أو صغيرة الدقة فتُعرض كاملة على خلفية مموهة منها
-        bg = ImageOps.fit(photo, (W // 6, H // 6)).filter(ImageFilter.GaussianBlur(6)).resize((W, H))
-        img.paste(Image.blend(bg, Image.new("RGB", (W, H), NAVY), 0.55))
-        over = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        max_w = W - 200
-        colors = (WHITE, YELLOW, (218, 224, 240))
-        blocks, th = self._fit_blocks(snap, 520, max_w, colors, lay)
-        label_h = 130
-        text_top = TEXT_BOTTOM - th - 10
-        label_top = text_top - label_h - 10
-        # الصورة/الفيديو كاملة فوق النص (لا يغطيها شيء) وفي وسط تلك المساحة
-        free = label_top - 30
-        if full:
-            # فيديو: يعبي الشاشة بعرضها (والطولي يعبيها كاملة) والنص فوقه على تظليل
-            scale = min(W / photo.width, H / photo.height)
-            ph, pw = int(photo.height * scale), int(photo.width * scale)
-            py = (free - ph) // 2 if ph <= free else (H - ph) // 2
-        else:
-            scale = min(W / photo.width, free / photo.height, MAX_UPSCALE)
-            ph, pw = int(photo.height * scale), int(photo.width * scale)
-            py = max(0, (free - ph) // 2)
-        px = (W - pw) // 2
-        img.paste(photo.resize((pw, ph), Image.LANCZOS), (px, py))
-        lay.add("photo", (px, py, px + pw, py + ph))
-        # الفيديو يتحرك فتكبيره بملء الشاشة مقبول أكثر من الصورة الثابتة
-        lay.image_used, lay.image_scale, lay.photo_radius = True, min(scale, MAX_UPSCALE) if full else scale, 0
-        lay.text_on_photo = True   # خلفية داكنة: الفوتر بالأبيض
-        # تدرج كحلي يبدأ فوق العنوان بمسافة ويغطي الأسفل
-        g0 = max(0, label_top - 420) if full else max(0, label_top - 420, py + ph - 10)
-        grad = Image.new("RGBA", (W, H - g0), NAVY + (0,))
-        top_a = 215 if full else 255     # فوق الفيديو تظليل أخف يبقيه ظاهرًا تحت النص
-        alpha = Image.linear_gradient("L").resize((W, H - g0)).point(lambda v: min(top_a, int(v * 1.8)))
-        grad.putalpha(alpha)
-        over.alpha_composite(grad, (0, g0))
-        d = ImageDraw.Draw(over)
-        # التصنيف بخط كبير مع شريط تحته
-        label = {"general": "خبر"}.get(snap.template, self._label(snap))
-        self.font_path = self.bold_path
-        xr = W - 92
-        x = xr
-        if label:
-            label += ":"
-            lw = self.width(label, 74)
-            d.rectangle((xr - lw - 20, label_top + 66, xr + 12, label_top + 104),
-                        fill=(RED if snap.template == "breaking" else BLUE) + (255,))
-            d.text((xr, label_top + 6), label, font=self.font(74), fill=WHITE, anchor="ra", direction="rtl",
-                   language="ar")
-            lay.add("chip:" + label, (int(xr - lw - 20), label_top + 20, xr + 12, label_top + 104))
-            lay.texts.append(label)
-            x = xr - lw - 50
-        for text in self._extras(snap):
-            ew = int(self.width(text, 38) + 56)
-            d.rounded_rectangle((x - ew, label_top + 62, x, label_top + 122), 30, fill=YELLOW + (255,))
-            d.text((x - ew / 2, label_top + 94), text, font=self.font(38), fill=NAVY, anchor="mm",
-                   direction="rtl", language="ar")
-            lay.add("chip:" + text, (x - ew, label_top + 62, x, label_top + 122))
-            lay.texts.append(text)
-            x -= ew + 16
-        # خط جانبي أصفر بجانب النص
-        d.rounded_rectangle((W - 78, text_top + 12, W - 66, text_top + th), 6, fill=YELLOW + (255,))
-        self._text(over, blocks, W - 100, text_top, max_w, "right", lay)
-        self._logo_badge(over, W - 60, SAFE_TOP + 10, lay, size=(170, 180), round_all=True)
-        return img, over
-
-    # الأذكار والأحاديث: كحلي هادئ بزخرفة ذهبية ونص في المنتصف
-    def _render_dhikr(self, snap, lay):
-        import math
-        img = Image.new("RGB", (W, H), NAVY)
-        glow = Image.radial_gradient("L").resize((W * 2, W * 2))
-        glow = glow.point(lambda v: int(max(0, 255 - v) * 0.55))
-        tint = Image.new("RGB", (W * 2, W * 2), (34, 64, 140))
-        img.paste(tint, (-W // 2, H // 2 - W), glow)
-        # نقش نجمة ثمانية خفيف
-        pat = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        pd = ImageDraw.Draw(pat)
-        step, r = 180, 46
-        for cy in range(-step // 2, H + step, step):
-            for cx in range(-step // 2 + (step // 2 if (cy // step) % 2 else 0), W + step, step):
-                for rot in (0, 45):
-                    pts = [(cx + r * math.cos(math.radians(a + rot)), cy + r * math.sin(math.radians(a + rot)))
-                           for a in range(0, 360, 90)]
-                    pd.polygon(pts, outline=GOLD + (34,), width=2)
-        img.paste(pat, (0, 0), pat)
-        over = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        d = ImageDraw.Draw(over)
-        # إطار ذهبي مزدوج
-        fx0, fy0, fx1, fy1 = 60, SAFE_TOP - 40, W - 60, FOOTER_TOP - 20
-        d.rounded_rectangle((fx0, fy0, fx1, fy1), 40, outline=GOLD + (255,), width=4)
-        d.rounded_rectangle((fx0 + 16, fy0 + 16, fx1 - 16, fy1 - 16), 30, outline=GOLD + (120,), width=2)
-        logo = self._logo_img(240, 170)
-        ly = fy0 + 50
-        if logo is not None:
-            over.paste(logo, ((W - logo.width) // 2, ly), logo)
-            lay.add("logo", ((W - logo.width) // 2, ly, (W + logo.width) // 2, ly + logo.height))
-            ly += logo.height
-        max_w = W - 300
-        blocks, th = self._fit_blocks(snap, 980, max_w, (WHITE, GOLD, LIGHT), lay,
-                                      tiers=(1.3, 1.2, 1.1, 1.0, 0.9, 0.8, 0.7))
-        label = "جمعة مباركة" if "جمعه" in snap.headline.replace("ة", "ه") else self._label(snap)
-        area_top, area_bot = ly + 40, fy1 - 60
-        top = area_top + max(0, (area_bot - area_top - th - 260) // 2)
-        lw = self.width(label, 58)
-        d.text((W / 2, top + 40), label, font=self.font(58), fill=GOLD, anchor="mm", direction="rtl", language="ar")
-        lay.add("chip:" + label, (int(W / 2 - lw / 2), top, int(W / 2 + lw / 2), top + 80))
-        lay.texts.append(label)
-        self._divider(d, top + 110)
-        self._text(over, blocks, W // 2, top + 160, max_w, "center", lay)
-        self._divider(d, top + 160 + th + 50)
-        return img, over
-
-    @staticmethod
-    def _divider(d, y):
-        cx = W // 2
-        d.line((cx - 200, y, cx - 30, y), fill=GOLD + (200,), width=3)
-        d.line((cx + 30, y, cx + 200, y), fill=GOLD + (200,), width=3)
-        d.polygon([(cx, y - 14), (cx + 14, y), (cx, y + 14), (cx - 14, y)], fill=GOLD + (255,))
-
-    # بدون صورة
-    def _render_text(self, snap, lay):
-        img = Image.new("RGB", (W, H), BLUE)
-        grad = Image.linear_gradient("L").resize((W, H))
-        img.paste(Image.new("RGB", (W, H), NAVY), (0, 0), grad)
-        d = ImageDraw.Draw(img)
-        # مربعات بيضاء على الحواف كما في النموذج
-        d.rectangle((W - 90, 0, W, 170), fill=WHITE)
-        d.rectangle((0, 1180, 120, 1600), fill=WHITE)
-        d.rectangle((W - 90, 1640, W, H), fill=YELLOW)
-        over = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        logo = self._logo_img(300, 210)
-        if logo is not None:
-            over.paste(logo, ((W - logo.width) // 2, SAFE_TOP + 20), logo)
-            lay.add("logo", ((W - logo.width) // 2, SAFE_TOP + 20, (W + logo.width) // 2, SAFE_TOP + 20 + logo.height))
-        max_w = W - 240
-        colors = (WHITE, YELLOW, (214, 222, 244))
-        blocks, th = self._fit_blocks(snap, 900, max_w, colors, lay, tiers=(1.5, 1.35, 1.2, 1.1, 1.0, 0.9))
-        dd = ImageDraw.Draw(over)
-        label = self._label(snap)
-        lw = self.width(label, 54)
-        top = 420 + max(0, (TEXT_BOTTOM - 420 - th - 130) // 2)
-        box = (int(W / 2 - lw / 2 - 44), top, int(W / 2 + lw / 2 + 44), top + 86)
-        if label:
-            dd.rounded_rectangle(box, 43, fill=(RED if snap.template == "breaking" else YELLOW) + (255,))
-            dd.text((W / 2, top + 46), label, font=self.font(54), anchor="mm", direction="rtl", language="ar",
-                    fill=WHITE if snap.template == "breaking" else NAVY)
-            lay.add("chip:" + label, box)
-            lay.texts.append(label)
-            x = box[0] - 16
-        else:
-            x = W // 2 + 200
-        for text in self._extras(snap):
-            ew = int(self.width(text, 38) + 50)
-            dd.rounded_rectangle((x - ew, top + 14, x, top + 72), 29, outline=WHITE + (255,), width=3)
-            dd.text((x - ew / 2, top + 45), text, font=self.font(38), fill=WHITE, anchor="mm",
-                    direction="rtl", language="ar")
-            lay.add("chip:" + text, (x - ew, top + 14, x, top + 72))
-            x -= ew + 14
-        self._text(over, blocks, W // 2, top + 130, max_w, "center", lay)
-        return img, over
+    def render(self, snap):
+        if snap.template in ("tickets", "availability", "dhikr") or snap.rows:
+            return super().render(snap)
+        return self.legacy.render(snap)

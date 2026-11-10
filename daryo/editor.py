@@ -57,9 +57,10 @@ SYSTEM_PROMPT = """أنت محرر أخبار رياضية سعودي لحساب
 class EditResult(BaseModel):
     publishable: bool
     skip_reason: str = ""
-    template: Literal["breaking", "statement", "stats", "transfer", "general", "comment", "dhikr"]
+    template: Literal["breaking", "statement", "stats", "transfer", "general", "comment", "dhikr", "tickets", "availability"]
     headline: str
     body: str = ""
+    rows: list[tuple[str, str]] = Field(default_factory=list)
     kicker: str = Field("", description="كلمة أو كلمتان مثل الآن أو رسميًا، أو فارغ")
     number: str = ""
     number_caption: str = ""
@@ -132,6 +133,16 @@ def as_comment(res: "EditResult", raw: str) -> "EditResult":
     return res
 
 
+def structured_result(raw: str) -> EditResult | None:
+    from .structured import extract
+    post = extract(raw)
+    if post is None:
+        return None
+    return EditResult(publishable=True, template=post.template, headline=post.headline,
+                      body=post.body, rows=post.rows, is_rumor=False,
+                      telegram_caption=raw)
+
+
 def classify(raw: str) -> str:
     norm = normalize_ar(raw)
     if _has_any(norm, TRANSFER_SIGNS):
@@ -201,6 +212,9 @@ def _body_from(rest: str) -> str:
 def rule_based(raw: str) -> EditResult:
     """محرر احتياطي محافظ: يقتطع من نص المصدر حرفيًا"""
     # أسطر لا تخص الخبر: وسوم فقط، روابط حجز/متجر، أسطر تنتهي بنقطتين بلا محتوى
+    structured = structured_result(raw)
+    if structured is not None:
+        return structured
     kept = []
     for line in (raw or "").split("\n"):
         bare = re.sub(r"#\S+", "", strip_decor(re.sub(r"#\S+", "", line))).strip(" :.-|!")
@@ -290,6 +304,9 @@ class Editor:
         """يعيد (النتيجة، الطريقة). يرفع EditorError عند الفشل الكامل"""
         if is_dhikr(raw):
             return dhikr_result(raw), "rules"
+        structured = structured_result(raw)
+        if structured is not None:
+            return structured, "rules"
         if self.client:
             try:
                 res = self._llm(raw, history_cands)
@@ -336,6 +353,9 @@ def validate(res: EditResult, raw: str) -> list[str]:
         extra = numbers(val) - src_nums
         if extra:
             problems.append(f"رقم غير موجود في المصدر في {field_name}: {extra}")
+    for label, value in res.rows:
+        if numbers(label + " " + value) - src_nums:
+            problems.append("رقم غير موجود في المصدر في صفوف البيانات")
     norm = normalize_ar(raw)
     if "رسمي" in normalize_ar(res.kicker + " " + res.headline) and not _has_any(norm, OFFICIAL_SIGNS):
         problems.append("وصف الخبر بالرسمي والمصدر لا يذكر ذلك")
@@ -343,7 +363,7 @@ def validate(res: EditResult, raw: str) -> list[str]:
         problems.append("خبر انتقال غير مؤكد وُصف بالرسمي")
     if not (res.headline or res.quote):
         problems.append("لا يوجد عنوان")
-    if len(res.headline.split()) > 14 and res.template not in ("statement", "dhikr"):
+    if len(res.headline.split()) > 14 and res.template not in ("statement", "dhikr", "tickets", "availability"):
         problems.append("العنوان طويل")
     return problems
 
@@ -365,6 +385,7 @@ def to_snap(res: EditResult, image_path: str | None, source_url: str, is_update:
         is_rumor=rumor,
         is_update=is_update,
         image_path=image_path,
+        rows=[(clean(a), clean(b)) for a, b in res.rows],
         caption=res.telegram_caption or res.headline,
         source_url=source_url,
     )

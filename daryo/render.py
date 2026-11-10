@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps, features
 
@@ -81,12 +82,19 @@ class Renderer:
             self._cache[key] = ImageFont.truetype(self.font_path, size, layout_engine=ImageFont.Layout.RAQM)
         return self._cache[key]
 
+    @staticmethod
+    def display_text(text: str) -> str:
+        # Keep a numeric range, score or time in source order within Arabic.
+        # Apply controls only to drawing / measuring, never stored source text.
+        return re.sub(r"[0-9٠-٩]+(?:[–—:/-][0-9٠-٩]+)+",
+                      lambda m: "\u202a" + m.group() + "\u202c", text)
+
     def width(self, text: str, size: int) -> float:
         parts = self._runs(text)
         if parts is None:
-            return self.font(size).getlength(text, direction="rtl", language="ar")
+            return self.font(size).getlength(self.display_text(text), direction="rtl", language="ar")
         es, gap = self._esize(size)
-        return sum(es + 2 * gap if is_e else self.font(size).getlength(t, direction="rtl", language="ar")
+        return sum(es + 2 * gap if is_e else self.font(size).getlength(self.display_text(t), direction="rtl", language="ar")
                    for is_e, t in parts)
 
     # ---------- الإيموجي داخل النص ----------
@@ -121,26 +129,28 @@ class Renderer:
                 self._target.paste(im, (int(x), int(y + size * 0.16)), im)
                 x -= gap
             else:
-                d.text((x, y), t, font=f, fill=color, anchor="ra", direction="rtl", language="ar")
-                x -= f.getlength(t, direction="rtl", language="ar")
+                d.text((x, y), self.display_text(t), font=f, fill=color, anchor="rt", direction="rtl", language="ar")
+                x -= f.getlength(self.display_text(t), direction="rtl", language="ar")
 
     def wrap(self, text: str, size: int, max_w: int) -> list[str]:
-        lines, cur = [], ""
-        for word in text.split():
-            trial = f"{cur} {word}".strip()
-            if self.width(trial, size) <= max_w or not cur:
-                cur = trial
-            else:
+        lines = []
+        for paragraph in text.splitlines() or [text]:
+            cur = ""
+            for word in paragraph.split():
+                trial = f"{cur} {word}".strip()
+                if self.width(trial, size) <= max_w or not cur:
+                    cur = trial
+                else:
+                    lines.append(cur)
+                    cur = word
+            if cur:
                 lines.append(cur)
-                cur = word
-        if cur:
-            lines.append(cur)
         return lines
 
     def balance(self, text: str, size: int, max_w: int, n: int) -> list[str]:
         """يوازن أطوال الأسطر حتى لا تبقى كلمة يتيمة في السطر الأخير"""
         best = self.wrap(text, size, max_w)
-        if n <= 1:
+        if n <= 1 or "\n" in text:
             return best
         lo, hi = max_w * 0.45, max_w
         while hi - lo > 4:
@@ -176,9 +186,9 @@ class Renderer:
                 xr = W / 2 + self.width(line, size) / 2 if align == "center" else x_right
                 self._draw_line(d, xr, y, line, size, color)
             elif align == "center":
-                d.text((W / 2, y), line, font=f, fill=color, anchor="ma", direction="rtl", language="ar")
+                d.text((W / 2, y), self.display_text(line), font=f, fill=color, anchor="mt", direction="rtl", language="ar")
             else:
-                d.text((x_right, y), line, font=f, fill=color, anchor="ra", direction="rtl", language="ar")
+                d.text((x_right, y), self.display_text(line), font=f, fill=color, anchor="rt", direction="rtl", language="ar")
             lay.texts.append(line)
             y += self.line_h(size)
         maxw = max((self.width(l, size) for l in lines), default=0)
