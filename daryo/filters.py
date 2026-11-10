@@ -39,7 +39,13 @@ def reject_reason(post: SourcePost) -> str | None:
     clean = strip_decor(raw)
     norm = normalize_ar(raw)
     if _AD.search(raw):
-        return "إعلان"
+        from .structured import is_ticket_post
+        # Booking calls are useful in match ticket news. All other advertising
+        # matches (stores, gambling, subscriptions, etc.) still reject the post.
+        ad_matches = [m.group() for m in _AD.finditer(raw)]
+        booking_only = all(re.fullmatch(r"احجز (?:الان|الآن)", m) for m in ad_matches)
+        if not (is_ticket_post(raw) and booking_only):
+            return "إعلان"
     if post.has_buttons and len(clean) < 200:
         return "منشور بأزرار (غالبًا إعلان)"
     if _OFF.search(clean):

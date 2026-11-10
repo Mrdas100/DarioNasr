@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 from functools import lru_cache
+from collections import Counter
 from pathlib import Path
 
 from fontTools.ttLib import TTFont
@@ -11,6 +12,7 @@ from PIL import Image, ImageStat
 from .config import APPROVED_FONTS
 from .emoji import is_emoji_char
 from .models import Snap
+from .textutil import strip_decor
 from .render import FOOTER_TOP, H, SAFE_TOP, SIDE, W, Layout
 
 # حروف تحكم اتجاه لا تحتاج رسمًا
@@ -116,11 +118,17 @@ def check_render(img: Image.Image, lay: Layout, snap: Snap) -> list[str]:
                     continue
             if _overlap(b1, b2):
                 problems.append(f"تداخل بين {n1} و {n2}")
-    # التأكد من أن النصوص المطلوبة رُسمت فعلًا
-    drawn = " ".join(lay.texts)
-    for t in (snap.headline, snap.quote):
-        if t and t.split()[0] not in drawn:
-            problems.append("العنوان لم يُرسم كاملًا")
+    # Verify complete required content, including the last word and every row.
+    # A first-word check allowed truncated bodies and lists to pass unnoticed.
+    drawn = Counter(strip_decor(" ".join(lay.texts)).split())
+    required = [snap.quote or snap.headline] if snap.template == "statement" else [snap.headline]
+    required.extend((snap.body, snap.speaker, snap.number, snap.number_caption))
+    if snap.rows:
+        required.append(" ".join(v for row in snap.rows for v in row))
+    for text in required:
+        if text and Counter(strip_decor(text).split()) - drawn:
+            problems.append("محتوى مطلوب لم يُرسم كاملًا")
+            break
     # الخطوط المستخدمة: Arial Bold فقط
     for f in lay.fonts:
         if file_sha256(Path(f)) not in APPROVED_FONTS:

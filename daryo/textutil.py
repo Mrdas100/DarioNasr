@@ -86,3 +86,20 @@ def word_count(text: str) -> int:
 def clip_words(text: str, n: int) -> str:
     w = text.split()
     return " ".join(w[:n])
+
+
+def message_chunks(text: str, limit: int = 3500) -> list[str]:
+    """Split Telegram text on word boundaries, keeping booking URLs intact."""
+    chunks, current = [], ""
+    for token in re.findall(r"\S+\s*", text):
+        if len(token.encode('utf-16-le')) // 2 > limit:
+            raise ValueError("كلمة أو رابط أطول من حد رسالة تيليجرام")
+        trial = current + token
+        if len(trial.encode('utf-16-le')) // 2 > limit:
+            chunks.append(current.rstrip())
+            current = token
+        else:
+            current = trial
+    if current:
+        chunks.append(current.rstrip())
+    return chunks

@@ -18,12 +18,12 @@ from .editor import Editor, EditorError, to_snap
 from .filters import reject_reason
 from .models import SourcePost
 from .qa import QAError, check_image_file, check_render, check_snap_text, strip_unsupported, verify_font
-from .design import Designer
-from .render import RenderError, Renderer, save_png
+from .design import Designer, create_renderer
+from .render import RenderError, save_png
 from .schedule import in_hours, parse_hours
 from .sources import BotSource, SourceError, WebSource, make_source
 from .telegram_bot import Bot
-from .textutil import normalize_ar, unescape_html
+from .textutil import message_chunks, normalize_ar, unescape_html
 from .collage import make_collage
 from .emoji import EmojiStore
 from .video import VideoError, compose, video_of
@@ -41,6 +41,7 @@ HELP = """أوامر نظام داريو النصر:
 /latest 2 معالجة آخر منشورين لم يُرسلا
 /redo 2 إعادة تصميم آخر منشورين حتى لو أُرسلا
 /test إرسال سنابة تجريبية
+/templates معاينة القوالب الجديدة
 /groups المجموعات التي تصلها التصاميم
 /ungroup إيقاف الإرسال لكل المجموعات
 لإرسال التصاميم لمجموعة: أضف البوت للمجموعة (أو اكتب /group داخلها)"""
@@ -64,11 +65,7 @@ class Service:
             self.source.attach(self.bot)
         self.editor = Editor(cfg)
         emoji = EmojiStore(cfg.data_dir / "emoji")
-        if cfg.design_style in ("clean", "cinema", "brand"):
-            self.renderer = Renderer(cfg.font_path, cfg.logo_path, cfg.snap_handle, cfg.account_name,
-                                     emoji=emoji, style=cfg.design_style)
-        else:   # القالب المعتمد: بطاقة / بوستر بألوان النصر
-            self.renderer = Designer(cfg.font_path, cfg.logo_path, cfg.snap_handle, cfg.account_name, emoji=emoji)
+        self.renderer = create_renderer(cfg, emoji)
         self.wake = asyncio.Event()
         self.loop: asyncio.AbstractEventLoop | None = None
         self.fail_count = 0
@@ -147,6 +144,9 @@ class Service:
             n = int(arg) if arg.strip().isdigit() else 2
             asyncio.run_coroutine_threadsafe(self.reprocess_latest(min(n, 10), force=cmd == "/redo"), self.loop)
             return f"🔁 جارٍ معالجة آخر {min(n, 10)} منشورات من القناة"
+        if cmd == "/templates":
+            asyncio.run_coroutine_threadsafe(self.send_templates(), self.loop)
+            return "🧪 جارٍ تجهيز معاينات القوالب"
         if cmd == "/test":
             asyncio.run_coroutine_threadsafe(self.send_test(), self.loop)
             return "🧪 جارٍ تجهيز سنابة تجريبية"
@@ -393,24 +393,34 @@ class Service:
 
         clean = lambda s: strip_unsupported(s, self.cfg.font_path)
         sent_paths = []
+        prepared = []
+        # Validate all pages before sending any of them. An overflowing later
+        # page must not leave the reader with half of a price / absence list.
         for i, options in enumerate(groups):
-            path = lay = None
             used = None
             last_err = None
+            batch = []
             for photo in options + [None]:
                 snap = to_snap(res, photo, p.url, is_update, clean)
                 try:
-                    path, lay = await asyncio.to_thread(self._design, snap, msg_id, i)
+                    pages = await asyncio.to_thread(self.renderer.paginate, snap) if isinstance(self.renderer, Designer) else [snap]
+                    batch = []
+                    for j, page in enumerate(pages):
+                        path, lay = await asyncio.to_thread(self._design, page, msg_id, f"{i}_{j}")
+                        batch.append((path, lay, photo, page))
                     used = photo
                     break
                 except (RenderError, QAError) as e:
+                    batch = []
                     last_err = e
                     log.info("تصميم %s بالصورة %s لم يجتز الفحص: %s", msg_id, photo, e)
-            if path is None:
+            if not batch:
                 self._design_failed(msg_id, base, p, last_err)
                 return
             if options and used is None:
                 self.alert(f"خبر صوره لم تتسع في التصميم فأُرسل بالقالب النصي\n{p.url}")
+            prepared.extend(batch)
+        for path, lay, used, page in prepared:
             out = path
             vid = video_of(used)
             if vid is not None:
@@ -425,7 +435,19 @@ class Service:
                     if out.suffix == ".mp4":
                         await asyncio.to_thread(self.bot.send_video, out)
                     else:
-                        await asyncio.to_thread(self.bot.send_png, out)
+                        # Keep the original booking / source link accessible;
+                        # a shortened headline should never swallow the URL.
+                        caption = page.caption or page.headline
+                        if page.source_url and page.source_url not in caption:
+                            caption += "\n" + page.source_url
+                        if len(caption) > 1000:
+                            # Preserve complete long captions in a separate
+                            # message instead of cutting a booking URL in half.
+                            await asyncio.to_thread(self.bot.send_png, out)
+                            for part in message_chunks(caption):
+                                await asyncio.to_thread(self.bot.send_text, part)
+                        else:
+                            await asyncio.to_thread(self.bot.send_png, out, caption)
                 except Exception as e:
                     self.db.upsert_post(msg_id, status="failed", reason=f"إرسال: {e}", png_path=str(out), **base)
                     self.alert(f"التصميم جاهز لكن فشل إرساله\n{e}\n{p.url}")
@@ -462,7 +484,7 @@ class Service:
                 over.unlink(missing_ok=True)
         return compose(path, vid, box, path.with_suffix(".mp4"), lay.photo_radius)
 
-    def _design(self, snap, msg_id: int, idx: int) -> Path:
+    def _design(self, snap, msg_id: int, idx: int | str) -> tuple[Path, object]:
         check_snap_text(snap, self.cfg.font_path)
         img, lay = self.renderer.render(snap)
         problems = check_render(img, lay, snap)
@@ -474,6 +496,16 @@ class Service:
     def _design_failed(self, msg_id, base, p, e):
         self.db.upsert_post(msg_id, status="failed", reason=f"تصميم: {e}", **base)
         self.alert(f"فشل تصميم خبر ولم تُرسل أي صورة\nالسبب: {e}\n{p.url}")
+
+    async def send_templates(self):
+        from .samples import build_samples
+        try:
+            paths = await asyncio.to_thread(build_samples, self.cfg, self.cfg.out_dir / "previews")
+            if self.bot:
+                for path in paths:
+                    await asyncio.to_thread(self.bot.send_png, path, "معاينة قالب ببيانات تجريبية • " + path.stem)
+        except Exception as e:
+            self.alert(f"فشل توليد المعاينات: {e}")
 
     async def send_test(self):
         from .samples import SAMPLES

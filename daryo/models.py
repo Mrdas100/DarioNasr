@@ -3,13 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-TEMPLATES = ("breaking", "statement", "stats", "transfer", "general")
+TEMPLATES = ("breaking", "statement", "stats", "transfer", "general", "tickets", "availability")
 TEMPLATE_AR = {
     "breaking": "عاجل",
     "statement": "تصريح",
     "stats": "بالأرقام",
     "transfer": "سوق الانتقالات",
     "general": "أخبار النصر",
+    "tickets": "التذاكر",
+    "availability": "الغيابات",
     "comment": "تعليق",
     "dhikr": "ذكر",
 }
@@ -50,6 +52,11 @@ class Snap:
     caption: str = ""               # نص الخبر المرافق في تيليجرام
     source_url: str = ""
 
+    rows: list[tuple[str, str]] = field(default_factory=list)  # تسمية، قيمة من المصدر
+    page: int = 1
+    pages: int = 1
+
     def all_text(self) -> list[str]:
         return [s for s in (self.headline, self.body, self.kicker, self.number,
-                            self.number_caption, self.speaker, self.quote) if s]
+                            self.number_caption, self.speaker, self.quote,
+                            *(v for row in self.rows for v in row)) if s]
