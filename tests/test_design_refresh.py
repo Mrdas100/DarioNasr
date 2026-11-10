@@ -177,3 +177,40 @@ def test_long_caption_keeps_url_whole_across_telegram_messages():
     assert ' '.join(parts).split() == text.split()
     assert any(url in part for part in parts)
     assert all(len(part.encode('utf-16-le')) // 2 <= 3500 for part in parts)
+
+
+def test_ffmpeg_composes_video_audio_and_preserves_overlay(tmp_path, designer):
+    import json
+    import shutil
+    import subprocess
+    from PIL import ImageChops, ImageStat
+    from daryo.service import Service
+    if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
+        pytest.skip('ffmpeg and ffprobe are required for video integration')
+    source = tmp_path / 'source.mp4'
+    subprocess.run(['ffmpeg', '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                    'color=c=0x1655aa:s=640x360:r=30:d=1', '-f', 'lavfi', '-i',
+                    'sine=frequency=700:duration=1', '-shortest', '-c:v', 'libx264',
+                    '-pix_fmt', 'yuv420p', '-c:a', 'aac', str(source)], check=True)
+    photo = tmp_path / 'source.jpg'
+    Image.new('RGB', (640, 360), (22, 85, 170)).save(photo)
+    snap = Snap('breaking', 'اختبار سنابة الفيديو', 'الصوت والصورة والنص في أماكن مستقلة', image_path=str(photo))
+    img, lay = designer.render(snap)
+    png = tmp_path / 'design.png'
+    img.save(png)
+    box = next(b for n, b in lay.boxes if n == 'photo')
+    out = Service._compose_video(png, source, box, lay)
+    info = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-show_streams',
+                                               '-show_format', '-of', 'json', str(out)]))
+    video = next(s for s in info['streams'] if s['codec_type'] == 'video')
+    assert (video['width'], video['height']) == (1080, 1920)
+    assert any(s['codec_type'] == 'audio' for s in info['streams'])
+    assert abs(float(info['format']['duration']) - 1) < .1
+    frame = tmp_path / 'frame.png'
+    subprocess.run(['ffmpeg', '-y', '-v', 'error', '-i', str(out), '-frames:v', '1', str(frame)], check=True)
+    decoded = Image.open(frame).convert('RGB')
+    for crop in [(84, 150, 996, 329), (84, box[3] + 48, 996, 1648)]:
+        diff = ImageChops.difference(img.crop(crop), decoded.crop(crop))
+        assert max(ImageStat.Stat(diff).mean) < 8
+    assert not png.with_suffix('.base.png').exists()
+    assert not png.with_suffix('.over.png').exists()
