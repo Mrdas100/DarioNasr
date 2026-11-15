@@ -17,6 +17,32 @@ class StructuredPost:
     headline: str
     body: str = ""
     rows: list[tuple[str, str]] = field(default_factory=list)
+    extra: dict = field(default_factory=dict)
+
+
+FULL_TIME = re.compile(r"(?:نهاية\s+(?:المباراة|اللقاء)|انتهت\s+(?:المباراة|المواجهة)|انتهى\s+اللقاء|"
+                       r"صافرة\s+النهاية|النتيجة\s+النهائية|\bFT\b)", re.I)
+SCORE = re.compile(r"(?P<a>[\u0621-\u064A]{2,})\s*\(?\s*(?P<sa>\d{1,2})\s*\)?\s*[-–—×xX:]\s*"
+                   r"\(?\s*(?P<sb>\d{1,2})\s*\)?\s*(?P<b>[\u0621-\u064A]{2,})")
+
+
+def _result(text: str) -> StructuredPost | None:
+    """«النصر 3-1 الاتفاق» with an explicit full-time marker; one-word team names
+    exactly as written. Anything less certain stays ordinary news."""
+    if not FULL_TIME.search(text):
+        return None
+    lines = [x for x in text.splitlines() if x.strip()]
+    for i, line in enumerate(lines):
+        flat = strip_decor(line)
+        m = SCORE.search(flat)
+        if not m or "النصر" not in (m.group("a"), m.group("b")) or m.group("a") == m.group("b"):
+            continue
+        rest = [_clean(FULL_TIME.sub("", strip_decor(x))) for j, x in enumerate(lines) if j != i]
+        rest = [x for x in rest if x]
+        return StructuredPost("result", rest[0] if rest else "", "\n".join(rest[1:]),
+                              extra=dict(home=m.group("a"), away=m.group("b"),
+                                         home_score=m.group("sa"), away_score=m.group("sb")))
+    return None
 
 
 def is_ticket_post(raw: str) -> bool:
@@ -30,6 +56,9 @@ def _clean(text: str) -> str:
 
 def extract(raw: str) -> StructuredPost | None:
     text = BIDI_RE.sub("", raw or "")
+    result = _result(text)
+    if result is not None:
+        return result
     if is_ticket_post(text):
         # Prefer explicit parentheses, then a small set of stand names. Each
         # match retains the numeric spelling and range order of the source.

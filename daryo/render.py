@@ -56,6 +56,9 @@ class Layout:
     base: object = None         # التصميم تحت الصورة (للفيديو)
     image_scale: float = 0.0
     fonts: set[str] = field(default_factory=set)
+    canvas: tuple[int, int] = (W, H)
+    safe_top: int = SAFE_TOP
+    footer_top: int = FOOTER_TOP
 
     def add(self, name, box):
         self.boxes.append((name, tuple(int(v) for v in box)))

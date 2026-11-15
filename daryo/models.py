@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-TEMPLATES = ("breaking", "statement", "stats", "transfer", "general", "tickets", "availability")
+TEMPLATES = ("breaking", "statement", "stats", "transfer", "general", "tickets", "availability", "result")
 TEMPLATE_AR = {
     "breaking": "عاجل",
     "statement": "تصريح",
@@ -14,6 +14,7 @@ TEMPLATE_AR = {
     "availability": "الغيابات",
     "comment": "تعليق",
     "dhikr": "ذكر",
+    "result": "نهاية المباراة",
 }
 
 
@@ -53,10 +54,17 @@ class Snap:
     source_url: str = ""
 
     rows: list[tuple[str, str]] = field(default_factory=list)  # تسمية، قيمة من المصدر
+    # نتيجة مباراة (قالب result): كما وردت في المصدر حرفيًا
+    home: str = ""
+    away: str = ""
+    home_score: str = ""
+    away_score: str = ""
+    competition: str = ""
     page: int = 1
     pages: int = 1
 
     def all_text(self) -> list[str]:
         return [s for s in (self.headline, self.body, self.kicker, self.number,
-                            self.number_caption, self.speaker, self.quote,
+                            self.number_caption, self.speaker, self.quote, self.home, self.away,
+                            self.home_score, self.away_score, self.competition,
                             *(v for row in self.rows for v in row)) if s]
