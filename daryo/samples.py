@@ -67,6 +67,7 @@ SAMPLES.update({
 
 
 def build_samples(cfg: Config, out: Path) -> list[Path]:
+    with_post = cfg.post_format
     verify_font(cfg.font_path)
     r = create_renderer(cfg)
     paths = []
@@ -80,7 +81,7 @@ def build_samples(cfg: Config, out: Path) -> list[Path]:
                 raise SystemExit(f"{name}: {problems}")
             suffix = f"_{page.page}" if page.pages > 1 else ""
             paths.append(save_png(img, out / f"{name}{suffix}.png"))
-            if page.pages == 1 and hasattr(r, "render_post"):
+            if with_post and page.pages == 1 and hasattr(r, "render_post"):
                 try:
                     post, play = r.render_post(page)
                 except RenderError:
