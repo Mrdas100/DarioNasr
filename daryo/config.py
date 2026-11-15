@@ -59,6 +59,8 @@ class Config:
     initial_backfill: int = field(default_factory=lambda: int(_env("INITIAL_BACKFILL", "0")))
     # first = سنابة واحدة للألبوم بأول صورة | each = سنابة لكل صورة
     album_mode: str = field(default_factory=lambda: _env("ALBUM_MODE", "first"))
+    # نسخة 4:5 (1080×1350) لتويتر وإنستقرام تُرسل بعد سنابة الخبر
+    post_format: bool = field(default_factory=lambda: _bool("POST_FORMAT", True))
     design_style: str = field(default_factory=lambda: _env("DESIGN_STYLE", "nassr"))   # nassr (بطاقة/بوستر) | clean | cinema | brand
     use_source_images: bool = field(default_factory=lambda: _bool("USE_SOURCE_IMAGES", True))
     dedup_window_hours: int = field(default_factory=lambda: int(_env("DEDUP_WINDOW_HOURS", "72")))
@@ -66,7 +68,7 @@ class Config:
 
     # المسارات
     data_dir: Path = field(default_factory=lambda: Path(_env("DATA_DIR", str(ROOT / "data"))))
-    font_path: Path = field(default_factory=lambda: Path(_env("FONT_PATH", str(ROOT / "assets" / "fonts" / "IBMPlexSansArabic-Bold.ttf"))))
+    font_path: Path = field(default_factory=lambda: Path(_env("FONT_PATH", str(ROOT / "assets" / "fonts" / "NotoSansArabic-Bold.ttf"))))
     logo_path: Path = field(default_factory=lambda: Path(_env("LOGO_PATH", str(ROOT / "assets" / "logo.png"))))
 
     @property
@@ -101,4 +103,8 @@ APPROVED_FONTS = {
     APPROVED_FONT_SHA256,
     "691e0c891a38637ae6bbdb69700f8042cb0724a137bee615068ffdb92244f61f",   # IBMPlexSansArabic-Bold
     "597bd5502e5997be4414e4c9c88834b30ff3784250c84f20bce2b20e53ebd467",   # IBMPlexSansArabic-SemiBold
+    # Noto Sans Arabic (OFL): أقرب خط مجاني لخط الآيفون SF Arabic، اعتمده المالك 2026-11-15
+    "f74ac4557632e30aece5cd6a2398f8f4738bf23eae46eab2328e8e390339010c",   # NotoSansArabic-SemiBold
+    "195e8d8e1e723630e46c1d19fe7ec118a73e5825baa198737d6a96df8c4063b1",   # NotoSansArabic-Bold
+    "57759f9664ed7b837373ff7765fe7d47feae0b8207a0ebd139a61b9c35188482",   # NotoSansArabic-Black
 }

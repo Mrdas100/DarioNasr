@@ -453,6 +453,13 @@ class Service:
                     self.alert(f"التصميم جاهز لكن فشل إرساله\n{e}\n{p.url}")
                     return
             sent_paths.append(str(out))
+        post = await asyncio.to_thread(self._post_version, prepared, msg_id)
+        if post is not None and self.bot:
+            try:
+                await asyncio.to_thread(self.bot.send_png, post)
+                sent_paths.append(str(post))
+            except Exception as e:
+                log.warning("تعذر إرسال نسخة 4:5 للخبر %s: %s", msg_id, e)
         self.db.upsert_post(msg_id, status="sent", reason=None, template=res.template, headline=res.headline,
                             body=res.body, update_of=ref[0] if is_update else None,
                             png_path=";".join(sent_paths), sent_at=now_utc().isoformat(), **base)
@@ -492,6 +499,25 @@ class Service:
             raise QAError("؛ ".join(problems))
         stamp = datetime.now(ZoneInfo(self.cfg.timezone)).strftime("%Y%m%d_%H%M")
         return save_png(img, self.cfg.out_dir / f"daryo_{stamp}_{msg_id}_{idx}.png"), lay
+
+    def _post_version(self, prepared, msg_id: int):
+        """4:5 copy for X / Instagram: single-page photo or text news only.
+        A post that does not fit is skipped quietly; the snap already went out."""
+        if not self.cfg.post_format or len(prepared) != 1 or not hasattr(self.renderer, "render_post"):
+            return None
+        _, _, used, page = prepared[0]
+        if video_of(used) is not None:
+            return None
+        try:
+            img, lay = self.renderer.render_post(page)
+            problems = check_render(img, lay, page)
+            if problems:
+                raise QAError("؛ ".join(problems))
+        except (RenderError, QAError) as e:
+            log.info("نسخة 4:5 للخبر %s لم تتسع: %s", msg_id, e)
+            return None
+        stamp = datetime.now(ZoneInfo(self.cfg.timezone)).strftime("%Y%m%d_%H%M")
+        return save_png(img, self.cfg.out_dir / f"daryo_{stamp}_{msg_id}_post.png")
 
     def _design_failed(self, msg_id, base, p, e):
         self.db.upsert_post(msg_id, status="failed", reason=f"تصميم: {e}", **base)

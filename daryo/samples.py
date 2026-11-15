@@ -7,7 +7,7 @@ from dataclasses import replace
 from .config import ROOT, Config
 from .models import Snap
 from .qa import check_render, check_snap_text, verify_font
-from .render import save_png
+from .render import RenderError, save_png
 from .design import Designer, create_renderer
 
 WIDE = str(ROOT / "assets" / "sample_photo_wide.jpg")
@@ -54,6 +54,18 @@ SAMPLES.update({
 })
 
 
+SAMPLES.update({
+    "12_match_result": Snap("result", "النصر يحقق فوزه الخامس توالياً ويتصدر مؤقتاً",
+                            home="النصر", away="الاتفاق", home_score="3", away_score="1",
+                            competition="دوري روشن السعودي • الجولة 11",
+                            rows=[("النصر", "رونالدو 12' 67'"), ("النصر", "ماني 81'"),
+                                  ("الاتفاق", "لاعب الاتفاق 44'")]),
+    "13_statement_text": Snap("statement", "", speaker="مدرب النصر",
+                              quote="الفريق جاهز للديربي ولا نخاف من أحد، هدفنا النقاط الثلاث فقط",
+                              body="في المؤتمر الصحفي قبل مباراة الهلال"),
+})
+
+
 def build_samples(cfg: Config, out: Path) -> list[Path]:
     verify_font(cfg.font_path)
     r = create_renderer(cfg)
@@ -68,4 +80,13 @@ def build_samples(cfg: Config, out: Path) -> list[Path]:
                 raise SystemExit(f"{name}: {problems}")
             suffix = f"_{page.page}" if page.pages > 1 else ""
             paths.append(save_png(img, out / f"{name}{suffix}.png"))
+            if page.pages == 1 and hasattr(r, "render_post"):
+                try:
+                    post, play = r.render_post(page)
+                except RenderError:
+                    continue   # long lists stay 9:16 only
+                problems = check_render(post, play, page)
+                if problems:
+                    raise SystemExit(f"{name} (4:5): {problems}")
+                paths.append(save_png(post, out / f"{name}_post.png"))
     return paths

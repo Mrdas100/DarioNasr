@@ -55,8 +55,8 @@ def check_snap_text(snap: Snap, font_path: Path) -> None:
     for t in snap.all_text():
         miss = missing_glyphs(t, font_path)
         if miss:
-            raise QAError(f"حروف غير مدعومة في Arial Bold: {' '.join(sorted(miss))}")
-    if not snap.headline and not snap.quote:
+            raise QAError(f"حروف غير مدعومة في الخط: {' '.join(sorted(miss))}")
+    if not snap.headline and not snap.quote and snap.template != "result":
         raise QAError("لا يوجد عنوان")
 
 
@@ -85,8 +85,9 @@ def _overlap(a, b) -> bool:
 def check_render(img: Image.Image, lay: Layout, snap: Snap) -> list[str]:
     """يعيد قائمة مشكلات. القائمة الفارغة تعني أن التصميم سليم"""
     problems: list[str] = []
-    if img.size != (W, H):
-        problems.append(f"المقاس {img.size} بدل {W}x{H}")
+    if img.size != tuple(lay.canvas):
+        problems.append(f"المقاس {img.size} بدل {lay.canvas[0]}x{lay.canvas[1]}")
+    safe_top, footer_top = lay.safe_top, lay.footer_top
     if img.mode != "RGB":
         problems.append("نمط الألوان غير صحيح")
     if lay.overflow:
@@ -102,9 +103,9 @@ def check_render(img: Image.Image, lay: Layout, snap: Snap) -> list[str]:
             margin = 0 if name == "photo" else SIDE - 12   # الصورة قد تملأ عرض التصميم
             if b[0] < margin or b[2] > W - margin:
                 problems.append(f"{name} خارج الهامش الجانبي الآمن")
-            if b[1] < SAFE_TOP - 2 and name != "photo":   # الصورة قد تبدأ من أعلى التصميم
+            if b[1] < safe_top - 2 and name != "photo":   # الصورة قد تبدأ من أعلى التصميم
                 problems.append(f"{name} داخل منطقة واجهة سناب العلوية")
-            if b[3] > FOOTER_TOP and name != "photo":
+            if b[3] > footer_top and name != "photo":
                 problems.append(f"{name} يتداخل مع شريط الحقوق")
     names = [(n, b) for n, b in content if n.startswith("text:") or n in ("photo", "logo", "bar")
              or n.startswith("chip:")]
@@ -114,7 +115,7 @@ def check_render(img: Image.Image, lay: Layout, snap: Snap) -> list[str]:
             if "photo" in (n1, n2):
                 other = n2 if n1 == "photo" else n1
                 # الشعار والتبويبات فوق الصورة مقصودة، والنص فوق الصورة مقصود في قالب البوستر
-                if other == "logo" or other.startswith("chip:") or lay.text_on_photo:
+                if other in ("logo", "text:brand") or other.startswith("chip:") or lay.text_on_photo:
                     continue
             if _overlap(b1, b2):
                 problems.append(f"تداخل بين {n1} و {n2}")
@@ -122,7 +123,8 @@ def check_render(img: Image.Image, lay: Layout, snap: Snap) -> list[str]:
     # A first-word check allowed truncated bodies and lists to pass unnoticed.
     drawn = Counter(strip_decor(" ".join(lay.texts)).split())
     required = [snap.quote or snap.headline] if snap.template == "statement" else [snap.headline]
-    required.extend((snap.body, snap.speaker, snap.number, snap.number_caption))
+    required.extend((snap.body, snap.speaker, snap.number, snap.number_caption,
+                     snap.home, snap.away, snap.home_score, snap.away_score, snap.competition))
     if snap.rows:
         required.append(" ".join(v for row in snap.rows for v in row))
     for text in required:
@@ -134,6 +136,6 @@ def check_render(img: Image.Image, lay: Layout, snap: Snap) -> list[str]:
         if file_sha256(Path(f)) not in APPROVED_FONTS:
             problems.append(f"خط غير معتمد استُخدم: {f}")
     # الصورة غير فارغة
-    if max(ImageStat.Stat(img.resize((54, 96))).stddev) < 10:
+    if max(ImageStat.Stat(img.resize((54, 96 * img.height // H))).stddev) < 10:
         problems.append("التصميم الناتج شبه فارغ")
     return problems

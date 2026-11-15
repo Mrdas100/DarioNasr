@@ -47,7 +47,7 @@ SYSTEM_PROMPT = """أنت محرر أخبار رياضية سعودي لحساب
 - العنوان من 4 إلى 9 كلمات. النص الفرعي اختياري حتى 16 كلمة.
 - تجنب الفواصل والنقاط غير الضرورية ولا تضع نقطة في آخر العنوان. لا إيموجي ولا وسوم ولا روابط.
 - لا تذكر اسم قناة المصدر في التصميم.
-- اختر القالب: breaking للعاجل المهم، statement للتصريحات (speaker = صاحب التصريح، quote = جوهر كلامه بنصه أو باختصار أمين)، stats للأرقام والإحصائيات (number = الرقم الأبرز كما ورد، number_caption = ماذا يعني)، transfer للانتقالات والعقود، general لغير ذلك.
+- اختر القالب: breaking للعاجل المهم، statement للتصريحات (speaker = صاحب التصريح، quote = جوهر كلامه بنصه أو باختصار أمين)، stats للأرقام والإحصائيات (number = الرقم الأبرز كما ورد، number_caption = ماذا يعني)، transfer للانتقالات والعقود، result لنتيجة مباراة انتهت (home وaway اسما الفريقين كما وردا، home_score وaway_score الأهداف كما وردت، competition البطولة أو الجولة إن ذُكرت، rows أسطر الهدافين بالشكل [اسم الفريق, "اللاعب والدقائق"] من النص فقط)، general لغير ذلك.
 - publishable=false للإعلانات أو المنشورات التفاعلية أو الأسئلة للجمهور أو النكت أو ما لا يحمل خبرًا، أو إذا لم يكن في النص معلومة كافية.
 - telegram_caption: الخبر مختصرًا في سطرين بنفس القواعد.
 - علاقة الخبر بالأخبار السابقة المرفقة: duplicate إذا كان نفس الخبر بصياغة أخرى دون جديد، update إذا كان نفس الموضوع مع معلومة جديدة أو تغير في الحالة (مثل تأكيد رسمي أو رقم جديد أو نفي)، new إذا كان خبرًا مختلفًا. related_index رقم الخبر السابق المقصود أو -1.
@@ -57,7 +57,7 @@ SYSTEM_PROMPT = """أنت محرر أخبار رياضية سعودي لحساب
 class EditResult(BaseModel):
     publishable: bool
     skip_reason: str = ""
-    template: Literal["breaking", "statement", "stats", "transfer", "general", "comment", "dhikr", "tickets", "availability"]
+    template: Literal["breaking", "statement", "stats", "transfer", "general", "comment", "dhikr", "tickets", "availability", "result"]
     headline: str
     body: str = ""
     rows: list[tuple[str, str]] = Field(default_factory=list)
@@ -66,6 +66,11 @@ class EditResult(BaseModel):
     number_caption: str = ""
     speaker: str = ""
     quote: str = ""
+    home_team: str = ""
+    away_team: str = ""
+    home_score: str = ""
+    away_score: str = ""
+    competition: str = ""
     is_rumor: bool
     transfer_status: Literal["official", "rumor", "none"] = "none"
     relation: Literal["new", "duplicate", "update"] = "new"
@@ -138,8 +143,11 @@ def structured_result(raw: str) -> EditResult | None:
     post = extract(raw)
     if post is None:
         return None
+    x = post.extra
     return EditResult(publishable=True, template=post.template, headline=post.headline,
                       body=post.body, rows=post.rows, is_rumor=False,
+                      home_team=x.get("home", ""), away_team=x.get("away", ""),
+                      home_score=x.get("home_score", ""), away_score=x.get("away_score", ""),
                       telegram_caption=raw)
 
 
@@ -348,7 +356,8 @@ def validate(res: EditResult, raw: str) -> list[str]:
         return []
     problems = []
     src_nums = numbers(raw)
-    for field_name in ("headline", "body", "number", "number_caption", "quote", "kicker"):
+    for field_name in ("headline", "body", "number", "number_caption", "quote", "kicker",
+                       "home_score", "away_score", "competition"):
         val = getattr(res, field_name)
         extra = numbers(val) - src_nums
         if extra:
@@ -361,7 +370,13 @@ def validate(res: EditResult, raw: str) -> list[str]:
         problems.append("وصف الخبر بالرسمي والمصدر لا يذكر ذلك")
     if res.transfer_status == "official" and is_rumor_text(raw):
         problems.append("خبر انتقال غير مؤكد وُصف بالرسمي")
-    if not (res.headline or res.quote):
+    if res.template == "result":
+        if not (res.home_team and res.away_team and res.home_score and res.away_score):
+            problems.append("بيانات النتيجة ناقصة")
+        for team in (res.home_team, res.away_team):
+            if team and team not in raw:
+                problems.append("اسم فريق غير موجود في المصدر")
+    elif not (res.headline or res.quote):
         problems.append("لا يوجد عنوان")
     if len(res.headline.split()) > 14 and res.template not in ("statement", "dhikr", "tickets", "availability"):
         problems.append("العنوان طويل")
@@ -386,6 +401,9 @@ def to_snap(res: EditResult, image_path: str | None, source_url: str, is_update:
         is_update=is_update,
         image_path=image_path,
         rows=[(clean(a), clean(b)) for a, b in res.rows],
+        home=clean(res.home_team), away=clean(res.away_team),
+        home_score=clean(res.home_score), away_score=clean(res.away_score),
+        competition=clean(tidy_punct(res.competition)),
         caption=res.telegram_caption or res.headline,
         source_url=source_url,
     )
