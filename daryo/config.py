@@ -59,8 +59,8 @@ class Config:
     initial_backfill: int = field(default_factory=lambda: int(_env("INITIAL_BACKFILL", "0")))
     # first = سنابة واحدة للألبوم بأول صورة | each = سنابة لكل صورة
     album_mode: str = field(default_factory=lambda: _env("ALBUM_MODE", "first"))
-    # نسخة 4:5 (1080×1350) لتويتر وإنستقرام تُرسل بعد سنابة الخبر
-    post_format: bool = field(default_factory=lambda: _bool("POST_FORMAT", True))
+    # نسخة 4:5 (1080×1350) اختيارية، متوقفة افتراضيًا: المالك يريد سناب فقط (2026-11-15)
+    post_format: bool = field(default_factory=lambda: _bool("POST_FORMAT", False))
     design_style: str = field(default_factory=lambda: _env("DESIGN_STYLE", "nassr"))   # nassr (بطاقة/بوستر) | clean | cinema | brand
     use_source_images: bool = field(default_factory=lambda: _bool("USE_SOURCE_IMAGES", True))
     dedup_window_hours: int = field(default_factory=lambda: int(_env("DEDUP_WINDOW_HOURS", "72")))
