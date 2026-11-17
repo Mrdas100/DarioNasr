@@ -61,6 +61,12 @@ class Designer(Renderer):
         self._bg_cache: dict[int, Image.Image] = {}
         self._logo_cache: dict = {}
 
+    # Arial's Arabic glyphs sit visibly smaller on the em than Noto / Plex:
+    # scale its drawn size so the type reads the same as the approved samples.
+    def font(self, size):
+        k = 1.15 if "arial" in Path(self.font_path).name.lower() else 1.0
+        return super().font(int(round(size * k)))
+
     @property
     def text_bottom(self):
         return self.foot - 42

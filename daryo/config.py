@@ -68,7 +68,7 @@ class Config:
 
     # المسارات
     data_dir: Path = field(default_factory=lambda: Path(_env("DATA_DIR", str(ROOT / "data"))))
-    font_path: Path = field(default_factory=lambda: Path(_env("FONT_PATH", str(ROOT / "assets" / "fonts" / "NotoSansArabic-Bold.ttf"))))
+    font_path: Path = field(default_factory=lambda: Path(_env("FONT_PATH", str(ROOT / "assets" / "fonts" / "arial-bold.ttf"))))
     logo_path: Path = field(default_factory=lambda: Path(_env("LOGO_PATH", str(ROOT / "assets" / "logo.png"))))
 
     @property
