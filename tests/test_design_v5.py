@@ -19,12 +19,12 @@ def designer():
     return Designer(c.font_path, c.logo_path, c.snap_handle, c.account_name)
 
 
-def test_default_font_is_approved_noto_family(designer):
+def test_default_font_is_owner_arial_bold(designer):
     c = Config()
-    assert 'NotoSansArabic' in c.font_path.name
-    for path in (designer.bold_path, designer.semibold_path, designer.black_path):
-        verify_font(Path(path))
-    assert len({designer.bold_path, designer.semibold_path, designer.black_path}) == 3
+    assert c.font_path.name == 'arial-bold.ttf'
+    verify_font(c.font_path)
+    # One weight only: every block uses the owner's Arial Bold.
+    assert designer.bold_path == designer.semibold_path == designer.black_path == str(c.font_path)
 
 
 def test_result_extracted_only_with_full_time_marker():
